@@ -1,4 +1,4 @@
-// Enhanced WalletContextProvider.tsx - Hybrid Web3Auth + Solana Wallet Adapter
+// Enhanced WalletContextProvider.tsx - Fixed Web3Auth + Solana Wallet Adapter
 'use client'
 
 import { FC, ReactNode, useMemo, useEffect } from 'react'
@@ -10,7 +10,7 @@ import {
 import { WalletModalProvider } from '@solana/wallet-adapter-react-ui'
 import { clusterApiUrl } from '@solana/web3.js'
 import { Web3AuthProvider } from '@web3auth/modal/react'
-import { WEB3AUTH_NETWORK, CHAIN_NAMESPACES } from '@web3auth/modal'
+import { WEB3AUTH_NETWORK } from '@web3auth/modal'
 import type { Web3AuthContextConfig } from '@web3auth/modal/react'
 
 // Import the required wallet adapter CSS
@@ -20,14 +20,18 @@ interface WalletContextProviderProps {
   children: ReactNode
 }
 
-// Web3Auth Configuration for Solana Mainnet
+// Web3Auth Configuration for Solana Mainnet - FIXED VERSION
 const web3AuthContextConfig: Web3AuthContextConfig = {
   web3AuthOptions: {
-    clientId: process.env.NEXT_PUBLIC_WEB3AUTH_CLIENT_ID || 'BPi5PB_UiIZ-cPz1GtV5i1I2iOSOHuimiXBI0e-Oe_u6X3oVAbCiAZOTEBtTXw4tsluTITPqA8zMsfxIKMjiqNQ', // Replace with your actual client ID
+    // SECURITY FIX: Only use environment variable, no hardcoded fallback
+    clientId: process.env.NEXT_PUBLIC_WEB3AUTH_CLIENT_ID!, 
     web3AuthNetwork: WEB3AUTH_NETWORK.SAPPHIRE_MAINNET,
     uiConfig: {
       logoLight: '/hypebiscus_logo.png',
       logoDark: '/hypebiscus_logo.png',
+      theme: {
+        primary: '#FF4040'
+      }
     },
   },
 }
@@ -62,6 +66,11 @@ export const WalletContextProvider: FC<WalletContextProviderProps> = ({ children
     ],
     []
   );
+
+  // Throw error if Web3Auth client ID is not configured
+  if (!process.env.NEXT_PUBLIC_WEB3AUTH_CLIENT_ID) {
+    console.error('NEXT_PUBLIC_WEB3AUTH_CLIENT_ID environment variable is required for Web3Auth')
+  }
 
   return (
     <Web3AuthProvider config={web3AuthContextConfig}>

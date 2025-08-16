@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Loader2, Info, AlertTriangle, CheckCircle, ChevronDown, ChevronUp } from "lucide-react";
-import { useWallet } from '@solana/wallet-adapter-react';
+// FIXED: Use enhanced wallet hook that supports both wallet types
+import { useEnhancedWallet } from "@/hooks/useEnhancedWallet";
 import { useMeteoraDlmmService } from "@/lib/meteora/meteoraDlmmService";
 import { useMeteoraPositionService } from "@/lib/meteora/meteoraPositionService";
 import type { ExistingBinRange } from "@/lib/meteora/meteoraPositionService";
@@ -56,7 +57,6 @@ const binRangesCache = new Map<string, {
 }>();
 const CACHE_DURATION = 60000;
 
-
 const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({ 
   isOpen, 
   onClose,
@@ -64,7 +64,17 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
   userPortfolioStyle = 'conservative'
 }) => {
   const actualPortfolioStyle = userPortfolioStyle || 'conservative';
-  const { publicKey, sendTransaction } = useWallet();
+  
+  // FIXED: Use enhanced wallet hook that supports both traditional and Web3Auth
+  const { 
+    publicKey, 
+    isConnected, 
+    signAndSendTransaction, 
+    walletType, 
+    canTransact,
+    web3AuthConnection 
+  } = useEnhancedWallet();
+  
   const { service: dlmmService } = useMeteoraDlmmService();
   const { service: positionService } = useMeteoraPositionService();
   const tokens = useTokenData();
@@ -148,14 +158,21 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
 
   const selectedStrategyOption = strategyOptions.find(opt => opt.id === selectedStrategy);
 
-  // Fixed balance fetching function
+  // Fixed balance fetching function - works with both wallet types
   const fetchUserTokenBalance = useCallback(async () => {
     if (!publicKey || !pool) return;
 
     try {
-      const connection = new Connection(
-        process.env.NEXT_PUBLIC_SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com'
-      );
+      // FIXED: Use appropriate connection based on wallet type
+      let connection: Connection;
+      
+      if (walletType === 'web3auth' && web3AuthConnection) {
+        connection = web3AuthConnection;
+      } else {
+        connection = new Connection(
+          process.env.NEXT_PUBLIC_SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com'
+        );
+      }
 
       // Extract the token symbol from pool name (e.g., "wBTC-SOL" -> "wBTC")
       const { tokenX } = getTokenNames();
@@ -210,7 +227,7 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
       console.error('Error fetching token balance:', error);
       setUserTokenBalance(0);
     }
-  }, [publicKey, pool, tokens, getTokenNames]);
+  }, [publicKey, pool, tokens, getTokenNames, walletType, web3AuthConnection]);
 
   // Find existing bin ranges
   const findExistingBinRanges = useCallback(async (poolAddress: string) => {
@@ -358,7 +375,7 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
     }, 300);
   }, [userTokenBalance, tokenX, isUpdatingAmount]);
 
-  // Balance checking
+  // Balance checking - FIXED to work with both wallet types
   const checkUserBalances = useCallback(async () => {
     if (!publicKey || !pool || !amount || parseFloat(amount) <= 0 || !selectedStrategyOption) return;
 
@@ -366,9 +383,16 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
     setValidationError('');
 
     try {
-      const connection = new Connection(
-        process.env.NEXT_PUBLIC_SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com'
-      );
+      // FIXED: Use appropriate connection based on wallet type
+      let connection: Connection;
+      
+      if (walletType === 'web3auth' && web3AuthConnection) {
+        connection = web3AuthConnection;
+      } else {
+        connection = new Connection(
+          process.env.NEXT_PUBLIC_SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com'
+        );
+      }
 
       const solBalanceLamports = await connection.getBalance(publicKey);
       const solBalance = solBalanceLamports / LAMPORTS_PER_SOL;
@@ -399,7 +423,7 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
     } finally {
       setIsCheckingBalance(false);
     }
-  }, [publicKey, pool, amount, selectedStrategyOption]);
+  }, [publicKey, pool, amount, selectedStrategyOption, walletType, web3AuthConnection]);
 
   useEffect(() => {
     if (amount && parseFloat(amount) > 0 && publicKey && pool && selectedStrategyOption) {
@@ -417,7 +441,7 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
     }
   };
 
-  // Main transaction handler
+  // FIXED: Main transaction handler that works with both wallet types
   const handleAddLiquidity = async () => {
     if (!pool || !publicKey || !amount || parseFloat(amount) <= 0 || !currentBinId || !selectedStrategyOption || existingBinRanges.length === 0) return;
 
@@ -425,6 +449,11 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
       showToast.error('Not Enough SOL', 
         validationError || 'You need more SOL to complete this transaction.'
       );
+      return;
+    }
+
+    if (!canTransact) {
+      showToast.error('Cannot Transact', 'Wallet is not ready for transactions.');
       return;
     }
 
@@ -449,18 +478,32 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
       
       const transactionSignatures: string[] = [];
       
+      // FIXED: Use enhanced wallet's signAndSendTransaction method
       if (Array.isArray(result.transaction)) {
         for (let i = 0; i < result.transaction.length; i++) {
           const tx = result.transaction[i];
-          const signature = await sendTransaction(tx, dlmmService.connection, {
-            signers: [result.positionKeypair]
-          });
+          
+          // Get appropriate connection
+          let connection: Connection;
+          if (walletType === 'web3auth' && web3AuthConnection) {
+            connection = web3AuthConnection;
+          } else {
+            connection = dlmmService.connection;
+          }
+          
+          const signature = await signAndSendTransaction(tx, connection);
           transactionSignatures.push(signature);
         }
       } else {
-        const signature = await sendTransaction(result.transaction, dlmmService.connection, {
-          signers: [result.positionKeypair]
-        });
+        // Get appropriate connection
+        let connection: Connection;
+        if (walletType === 'web3auth' && web3AuthConnection) {
+          connection = web3AuthConnection;
+        } else {
+          connection = dlmmService.connection;
+        }
+        
+        const signature = await signAndSendTransaction(result.transaction, connection);
         transactionSignatures.push(signature);
       }
       
@@ -767,6 +810,7 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
               isCheckingBalance ||
               isLoadingBins ||
               existingBinRanges.length === 0 ||
+              !canTransact ||
               (balanceInfo ? !balanceInfo.hasEnoughSol : false)
             }
             className="bg-primary hover:bg-primary/80 w-full sm:w-auto order-1 sm:order-2"
@@ -781,6 +825,10 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                 Loading...
               </>
+            ) : !isConnected ? (
+              'Connect Wallet'
+            ) : !canTransact ? (
+              'Wallet Not Ready'
             ) : (
               'Add Liquidity'
             )}
