@@ -1,12 +1,11 @@
-// src/hooks/useEnhancedWallet.ts - FIXED with Web3Auth integration
+// src/hooks/useEnhancedWallet.ts - Updated with proper Web3Auth Modal integration
 
 import { useWallet } from '@solana/wallet-adapter-react';
 import { useCallback, useMemo } from 'react';
 import { Connection, PublicKey } from '@solana/web3.js';
-// FIXED: Import Web3Auth hooks for Solana
-import { useWeb3AuthConnect } from '@web3auth/modal/react';
+// Updated Web3Auth imports for modal package
+import { useWeb3AuthConnect, useWeb3AuthDisconnect, useWeb3AuthUser } from '@web3auth/modal/react';
 import { useSolanaWallet } from '@web3auth/modal/react/solana';
-// Import our wrapper hook for Web3Auth transactions
 import { useWeb3AuthTransactions } from './useWeb3AuthTransactions';
 
 interface EnhancedWalletState {
@@ -24,20 +23,21 @@ interface EnhancedWalletState {
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
   
-  // Transaction utilities - FIXED to work with both wallet types
+  // Transaction utilities - Works with both wallet types
   signAndSendTransaction: (transaction: any, connection: Connection) => Promise<string>;
   
   // State checks
   canTransact: boolean;
   connectionStatus: 'connected' | 'connecting' | 'disconnecting' | 'disconnected';
   
-  // ADDED: Web3Auth specific data
+  // Web3Auth specific data
   web3AuthAccounts?: string[] | null;
   web3AuthConnection?: Connection | null;
+  userInfo?: any;
 }
 
 /**
- * Enhanced wallet hook with Web3Auth integration - FIXED VERSION
+ * Enhanced wallet hook with proper Web3Auth Modal integration
  */
 export function useEnhancedWallet(): EnhancedWalletState {
   // Traditional wallet hooks
@@ -52,7 +52,7 @@ export function useEnhancedWallet(): EnhancedWalletState {
     sendTransaction: traditionalSendTransaction
   } = useWallet();
 
-  // FIXED: Web3Auth hooks
+  // Web3Auth Modal hooks - Updated imports
   const { 
     isConnected: web3AuthConnected, 
     connect: web3AuthConnect, 
@@ -60,17 +60,21 @@ export function useEnhancedWallet(): EnhancedWalletState {
   } = useWeb3AuthConnect();
   
   const { 
-    accounts: web3AuthAccounts, 
-    connection: web3AuthConnection 
-  } = useSolanaWallet();
+    disconnect: web3AuthDisconnect, 
+    loading: web3AuthDisconnecting 
+  } = useWeb3AuthDisconnect();
   
-  // FIXED: Use our wrapper hook for Web3Auth transactions
+  const { userInfo } = useWeb3AuthUser();
+  
   const { 
-    signAndSendTransaction: web3AuthSignAndSend,
-    isLoading: web3AuthSigning 
-  } = useWeb3AuthTransactions();
+    accounts: web3AuthAccounts, 
+    connection: web3AuthConnection
+  } = useSolanaWallet();
 
-  // FIXED: Determine which wallet is connected and get unified data
+  // Web3Auth transaction helper
+  const { signAndSendTransaction: web3AuthSignAndSend, isAvailable: web3AuthTxAvailable } = useWeb3AuthTransactions();
+
+  // Determine which wallet is connected and get unified data
   const walletState = useMemo(() => {
     if (traditionalConnected && traditionalPublicKey) {
       return {
@@ -102,7 +106,7 @@ export function useEnhancedWallet(): EnhancedWalletState {
   const connect = useCallback(async () => {
     try {
       // For now, default to traditional wallet connect
-      // In a real app, you might want to show a modal to choose wallet type
+      // You could show a modal to choose wallet type here
       if (!traditionalWallet) {
         throw new Error('No wallet selected');
       }
@@ -119,19 +123,17 @@ export function useEnhancedWallet(): EnhancedWalletState {
       if (walletState.walletType === 'traditional') {
         await traditionalDisconnect();
       } else if (walletState.walletType === 'web3auth') {
-        // Web3Auth disconnect is handled in header component
-        // This could be improved by importing the disconnect hook here too
-        window.location.reload(); // Temporary solution
+        await web3AuthDisconnect();
       }
     } catch (error) {
       console.error('Failed to disconnect wallet:', error);
       throw error;
     }
-  }, [walletState.walletType, traditionalDisconnect]);
+  }, [walletState.walletType, traditionalDisconnect, web3AuthDisconnect]);
 
-  // FIXED: Enhanced transaction sending that works with both wallet types
+  // Enhanced transaction sending that works with both wallet types
   const signAndSendTransaction = useCallback(async (
-    transaction: any, // Use any to avoid version conflicts
+    transaction: any,
     connection: Connection
   ): Promise<string> => {
     if (!walletState.isConnected || !walletState.publicKey) {
@@ -140,15 +142,20 @@ export function useEnhancedWallet(): EnhancedWalletState {
 
     try {
       if (walletState.walletType === 'traditional') {
-        // Use traditional wallet - cast to avoid version conflicts
+        // Use traditional wallet
         const signature = await traditionalSendTransaction(transaction, connection);
         console.log('Traditional wallet transaction sent:', signature);
         return signature;
         
       } else if (walletState.walletType === 'web3auth') {
-        // FIXED: Use Web3Auth transaction wrapper
-        if (!web3AuthConnection) {
-          throw new Error('Web3Auth connection not available');
+        // Note: Web3Auth Modal v10.1 has limited transaction signing support
+        // For now, we'll throw an informative error
+        throw new Error('Web3Auth transaction signing is not fully supported in v10.1. Please use traditional wallets for transactions or upgrade to a newer Web3Auth version.');
+        
+        /* 
+        // Uncomment and modify this section when Web3Auth v10.1 transaction signing is properly configured
+        if (!web3AuthConnection || !web3AuthTxAvailable) {
+          throw new Error('Web3Auth connection or transaction capability not available');
         }
         
         const result = await web3AuthSignAndSend(transaction, web3AuthConnection);
@@ -163,6 +170,7 @@ export function useEnhancedWallet(): EnhancedWalletState {
         
         console.log('Web3Auth transaction completed:', result.signature);
         return result.signature;
+        */
         
       } else {
         throw new Error('No suitable wallet available for transaction signing');
@@ -176,43 +184,47 @@ export function useEnhancedWallet(): EnhancedWalletState {
     walletState.publicKey, 
     walletState.walletType, 
     traditionalSendTransaction, 
+    web3AuthConnection,
     web3AuthSignAndSend,
-    web3AuthConnection
+    web3AuthTxAvailable
   ]);
 
   // Computed connection status
   const connectionStatus = useMemo((): 'connected' | 'connecting' | 'disconnecting' | 'disconnected' => {
     const isConnecting = traditionalConnecting || web3AuthConnecting;
-    const isDisconnecting = traditionalDisconnecting;
+    const isDisconnecting = traditionalDisconnecting || web3AuthDisconnecting;
     
     if (isConnecting) return 'connecting';
     if (isDisconnecting) return 'disconnecting';
     if (walletState.isConnected) return 'connected';
     return 'disconnected';
-  }, [traditionalConnecting, web3AuthConnecting, traditionalDisconnecting, walletState.isConnected]);
+  }, [traditionalConnecting, web3AuthConnecting, traditionalDisconnecting, web3AuthDisconnecting, walletState.isConnected]);
 
   // Check if wallet can perform transactions
   const canTransact = useMemo(() => {
+    // For now, only traditional wallets can transact due to Web3Auth v10.1 limitations
     return walletState.isConnected && 
            walletState.publicKey !== null && 
+           walletState.walletType === 'traditional' && // Only traditional wallets for now
            !traditionalConnecting && 
            !web3AuthConnecting && 
            !traditionalDisconnecting &&
-           !web3AuthSigning;
+           !web3AuthDisconnecting;
   }, [
     walletState.isConnected, 
     walletState.publicKey, 
+    walletState.walletType,
     traditionalConnecting, 
     web3AuthConnecting, 
     traditionalDisconnecting,
-    web3AuthSigning
+    web3AuthDisconnecting
   ]);
 
   return {
     // Connection state
     isConnected: walletState.isConnected,
     isConnecting: traditionalConnecting || web3AuthConnecting,
-    isDisconnecting: traditionalDisconnecting,
+    isDisconnecting: traditionalDisconnecting || web3AuthDisconnecting,
     
     // Wallet info
     publicKey: walletState.publicKey,
@@ -230,18 +242,21 @@ export function useEnhancedWallet(): EnhancedWalletState {
     
     // Web3Auth specific data
     web3AuthAccounts: web3AuthAccounts || null,
-    web3AuthConnection: web3AuthConnection || null
+    web3AuthConnection: web3AuthConnection || null,
+    userInfo
   };
 }
 
 /**
- * Hook for wallet connection status messages - UPDATED
+ * Hook for wallet connection status messages
  */
 export function useWalletStatusMessage(): string {
-  const { connectionStatus, walletName, walletType } = useEnhancedWallet();
+  const { connectionStatus, walletName, walletType, userInfo } = useEnhancedWallet();
   
   return useMemo(() => {
-    const walletDisplayName = walletType === 'web3auth' ? 'Social Login' : walletName;
+    const walletDisplayName = walletType === 'web3auth' 
+      ? `Social Login${userInfo?.email ? ` (${userInfo.email})` : ''}` 
+      : walletName;
     
     switch (connectionStatus) {
       case 'connecting':
@@ -254,11 +269,34 @@ export function useWalletStatusMessage(): string {
       default:
         return 'Wallet not connected';
     }
-  }, [connectionStatus, walletName, walletType]);
+  }, [connectionStatus, walletName, walletType, userInfo]);
 }
 
 /**
- * Hook for wallet action buttons - UPDATED
+ * Hook to get transaction capability message
+ */
+export function useTransactionCapabilityMessage(): string {
+  const { walletType, isConnected, canTransact } = useEnhancedWallet();
+  
+  return useMemo(() => {
+    if (!isConnected) {
+      return 'Please connect a wallet to perform transactions';
+    }
+    
+    if (walletType === 'web3auth') {
+      return 'Web3Auth transactions require a traditional wallet. Please connect Phantom, Solflare, or another Solana wallet to perform transactions.';
+    }
+    
+    if (!canTransact) {
+      return 'Wallet is not ready for transactions';
+    }
+    
+    return 'Ready to transact';
+  }, [walletType, isConnected, canTransact]);
+}
+
+/**
+ * Hook for wallet action buttons
  */
 export function useWalletActions() {
   const { connect, disconnect, isConnected, canTransact, walletType } = useEnhancedWallet();

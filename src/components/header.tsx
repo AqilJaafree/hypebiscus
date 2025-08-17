@@ -1,3 +1,4 @@
+// src/components/header.tsx - Updated with proper Web3Auth Modal integration
 "use client";
 
 import { useState, useEffect } from "react";
@@ -14,7 +15,7 @@ import {HouseIcon, LightningAIcon, WalletIcon, ListIcon} from "@phosphor-icons/r
 import Link from "next/link";
 import Image from "next/image";
 import { useWallet } from "@solana/wallet-adapter-react";
-// FIXED: Import correct Web3Auth hooks
+// Updated Web3Auth imports for modal package
 import { useWeb3AuthConnect, useWeb3AuthDisconnect, useWeb3AuthUser } from "@web3auth/modal/react";
 import { useSolanaWallet } from "@web3auth/modal/react/solana";
 import { Button } from "@/components/ui/button";
@@ -37,19 +38,22 @@ const Header = () => {
     disconnect: traditionalDisconnect 
   } = useWallet();
   
-  // FIXED: Web3Auth hooks - using correct imports
+  // Web3Auth Modal hooks - Updated imports
   const { 
     isConnected: web3AuthConnected, 
     connect: web3AuthConnect, 
-    loading: web3AuthLoading,
-    connectorName 
+    loading: web3AuthLoading 
   } = useWeb3AuthConnect();
   
-  const { disconnect: web3AuthDisconnect, loading: disconnectLoading } = useWeb3AuthDisconnect();
+  const { 
+    disconnect: web3AuthDisconnect, 
+    loading: disconnectLoading 
+  } = useWeb3AuthDisconnect();
+  
   const { userInfo } = useWeb3AuthUser();
   
-  // CRITICAL FIX: Access to Solana wallet data from Web3Auth
-  const { accounts: web3AuthAccounts, connection: web3AuthConnection } = useSolanaWallet();
+  // Access to Solana wallet data from Web3Auth Modal
+  const { accounts: web3AuthAccounts } = useSolanaWallet();
 
   // Combined connection state
   const isAnyWalletConnected = traditionalConnected || web3AuthConnected;
@@ -60,7 +64,7 @@ const Header = () => {
     setMounted(true);
   }, []);
 
-  // FIXED: Handle Web3Auth disconnect properly
+  // Handle Web3Auth disconnect properly
   const handleWeb3AuthDisconnect = async () => {
     if (web3AuthConnected) {
       try {
@@ -80,12 +84,12 @@ const Header = () => {
     }
   };
 
-  // FIXED: Get actual wallet address (no more placeholder!)
+  // Get actual wallet address
   const getWalletAddress = () => {
     if (traditionalConnected && traditionalPublicKey) {
       return traditionalPublicKey.toBase58();
     }
-    // CRITICAL FIX: Return actual Solana address from Web3Auth
+    // Return actual Solana address from Web3Auth Modal
     if (web3AuthConnected && web3AuthAccounts?.[0]) {
       return web3AuthAccounts[0];
     }
@@ -103,7 +107,7 @@ const Header = () => {
     }
     if (web3AuthConnected) {
       return {
-        type: connectorName ? `${connectorName}` : 'Social Login',
+        type: 'Social Login',
         address: getWalletAddress(),
         canShowAddress: !!web3AuthAccounts?.[0],
         userInfo: userInfo
@@ -188,7 +192,7 @@ const Header = () => {
             ) : (
               // Disconnected State - Show connection options
               <div className="flex items-center gap-2">
-                {/* FIXED: Web3Auth Social Login Button */}
+                {/* Web3Auth Social Login Button */}
                 <Button
                   onClick={web3AuthConnect}
                   disabled={web3AuthLoading}
