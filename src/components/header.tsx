@@ -57,7 +57,6 @@ const Header = () => {
 
   // Combined connection state
   const isAnyWalletConnected = traditionalConnected || web3AuthConnected;
-  const connectedWalletType = traditionalConnected ? 'Traditional' : web3AuthConnected ? 'Web3Auth' : null;
 
   // Update mounted state after component mounts
   useEffect(() => {
@@ -175,7 +174,7 @@ const Header = () => {
                   {/* Show user email for social login */}
                   {walletInfo.userInfo?.email && (
                     <span className="text-gray-400 text-xs truncate max-w-[120px]">
-                      {walletInfo.userInfo.email}
+                      {String(walletInfo.userInfo.email)}
                     </span>
                   )}
                 </div>

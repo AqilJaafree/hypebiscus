@@ -2,7 +2,8 @@ import { useWallet } from '@solana/wallet-adapter-react'
 import { useCallback, useMemo } from 'react'
 import { Connection, PublicKey, Transaction } from '@solana/web3.js'
 import { useWeb3AuthConnect, useWeb3AuthDisconnect, useWeb3AuthUser } from '@web3auth/modal/react'
-import { useSolanaWallet } from '@web3auth/modal/react/solana'
+// CORRECT: Use the official Solana hooks from Web3Auth Modal
+import { useSolanaWallet, useSignAndSendTransaction } from '@web3auth/modal/react/solana'
 
 interface SimpleWalletState {
   // Basic state
@@ -17,7 +18,8 @@ interface SimpleWalletState {
   
   // Additional info
   canTransact: boolean
-  userInfo?: any
+  userInfo?: Record<string, unknown> | null // FIXED: Allow null to match Web3Auth type
+  web3AuthConnection?: Connection | null
 }
 
 export function useEnhancedWallet(): SimpleWalletState {
@@ -31,11 +33,14 @@ export function useEnhancedWallet(): SimpleWalletState {
     sendTransaction: traditionalSendTransaction
   } = useWallet()
 
-  // Web3Auth hooks
-  const { isConnected: web3AuthConnected, connect: web3AuthConnect } = useWeb3AuthConnect()
+  // Web3Auth hooks - CORRECT: Use the official pattern
+  const { isConnected: web3AuthConnected } = useWeb3AuthConnect()
   const { disconnect: web3AuthDisconnect } = useWeb3AuthDisconnect()
   const { userInfo } = useWeb3AuthUser()
+  
+  // CORRECT: Use official Solana hooks from Web3Auth
   const { accounts, connection: web3AuthConnection } = useSolanaWallet()
+  const { signAndSendTransaction: web3AuthSignAndSend } = useSignAndSendTransaction()
 
   // Determine active wallet
   const walletState = useMemo(() => {
@@ -47,6 +52,7 @@ export function useEnhancedWallet(): SimpleWalletState {
       }
     }
     
+    // CORRECT: Check Web3Auth using accounts array
     if (web3AuthConnected && accounts?.[0]) {
       return {
         isConnected: true,
@@ -62,10 +68,10 @@ export function useEnhancedWallet(): SimpleWalletState {
     }
   }, [traditionalConnected, traditionalPublicKey, web3AuthConnected, accounts])
 
-  // Connect function
+  // Connect function - only works for traditional wallets
   const connect = useCallback(async () => {
     if (!traditionalWallet) {
-      throw new Error('No wallet selected')
+      throw new Error('No wallet selected. Web3Auth connects automatically.')
     }
     await traditionalConnect()
   }, [traditionalWallet, traditionalConnect])
@@ -79,7 +85,7 @@ export function useEnhancedWallet(): SimpleWalletState {
     }
   }, [walletState.walletType, traditionalDisconnect, web3AuthDisconnect])
 
-  // FIXED: Simplified transaction signing
+  // CORRECT: Transaction signing using official Web3Auth hooks
   const signAndSendTransaction = useCallback(async (
     transaction: Transaction,
     connection?: Connection
@@ -96,13 +102,16 @@ export function useEnhancedWallet(): SimpleWalletState {
       return await traditionalSendTransaction(transaction, conn)
       
     } else if (walletState.walletType === 'web3auth') {
-      // FIXED: Use Web3Auth's native connection - this WORKS in v10.1!
-      if (!web3AuthConnection) {
-        throw new Error('Web3Auth connection not available')
+      // CORRECT: Use the official Web3Auth hook for signing and sending
+      try {
+        // The official hook returns { data, error, loading }
+        // We need to call it and wait for the result
+        const result = await web3AuthSignAndSend(transaction)
+        return result // This should be the transaction signature
+      } catch (error) {
+        console.error('Web3Auth transaction failed:', error)
+        throw new Error(`Transaction failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
       }
-      
-      // This is the correct way to send transactions with Web3Auth v10.1
-      return await web3AuthConnection.sendTransaction(transaction, [])
     }
     
     throw new Error('No suitable wallet for transactions')
@@ -111,7 +120,7 @@ export function useEnhancedWallet(): SimpleWalletState {
     walletState.publicKey, 
     walletState.walletType, 
     traditionalSendTransaction,
-    web3AuthConnection
+    web3AuthSignAndSend
   ])
 
   const canTransact = useMemo(() => {
@@ -119,9 +128,9 @@ export function useEnhancedWallet(): SimpleWalletState {
            walletState.publicKey !== null && 
            (
              (walletState.walletType === 'traditional') ||
-             (walletState.walletType === 'web3auth' && !!web3AuthConnection)
+             (walletState.walletType === 'web3auth' && !!web3AuthSignAndSend && web3AuthConnection !== null)
            )
-  }, [walletState.isConnected, walletState.publicKey, walletState.walletType, web3AuthConnection])
+  }, [walletState.isConnected, walletState.publicKey, walletState.walletType, web3AuthSignAndSend, web3AuthConnection])
 
   return {
     isConnected: walletState.isConnected,
@@ -131,6 +140,7 @@ export function useEnhancedWallet(): SimpleWalletState {
     disconnect,
     signAndSendTransaction,
     canTransact,
-    userInfo
+    userInfo,
+    web3AuthConnection
   }
 }

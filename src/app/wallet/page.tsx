@@ -168,12 +168,22 @@ function usePositionActions(
         new PublicKey(lbPairAddress)
       );
       const position = await dlmmPool.getPosition(posKey);
-      const tx = await dlmmPool.claimSwapFee({
+      const txOrTxs = await dlmmPool.claimSwapFee({
         owner: user,
         position,
       });
-      if (tx) {
-        await sendTransaction(tx, connection);
+      
+      // FIXED: Handle both single transaction and array of transactions
+      if (txOrTxs) {
+        if (Array.isArray(txOrTxs)) {
+          // Handle array of transactions
+          for (const tx of txOrTxs) {
+            await sendTransaction(tx, connection);
+          }
+        } else {
+          // Handle single transaction
+          await sendTransaction(txOrTxs, connection);
+        }
         showToast.success(
           "Transaction successful",
           "Your fees have been claimed."
@@ -194,7 +204,6 @@ function usePositionActions(
       setClaiming(false);
     }
   }
-
   return {
     closing,
     claiming,
