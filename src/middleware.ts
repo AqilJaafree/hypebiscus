@@ -26,15 +26,60 @@ export function middleware(request: NextRequest) {
   // Add security headers to all responses
   const response = NextResponse.next()
   
-  // FIXED: Content Security Policy with Web3Auth domains
+  // ✅ COMPLETE CSP: Fixed all missing domains from console logs
   const cspHeader = `
     default-src 'self';
-    script-src 'self' 'unsafe-inline' 'unsafe-eval' https://terminal.jup.ag https://api.web3auth.io https://assets.web3auth.io https://auth.web3auth.io;
-    style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
-    img-src 'self' data: https: blob:;
-    font-src 'self' data: https://fonts.gstatic.com;
-    connect-src 'self' https://api.mainnet-beta.solana.com https://solana-mainnet.g.alchemy.com https://sly-virulent-owl.solana-mainnet.quiknode.pro https://terminal.jup.ag https://lite-api.jup.ag https://dlmm-api.meteora.ag https://cdn.jsdelivr.net https://api.web3auth.io https://assets.web3auth.io wss:;
-    frame-src 'self' https://auth.web3auth.io https://wallet.web3auth.io;
+    script-src 'self' 'unsafe-inline' 'unsafe-eval' 
+      https://terminal.jup.ag 
+      https://api.web3auth.io 
+      https://assets.web3auth.io 
+      https://auth.web3auth.io
+      https://js.hcaptcha.com
+      https://newassets.hcaptcha.com
+      https://cdn.segment.com;
+    style-src 'self' 'unsafe-inline' 
+      https://fonts.googleapis.com
+      https://js.hcaptcha.com
+      https://newassets.hcaptcha.com;
+    img-src 'self' data: https: blob:
+      https://js.hcaptcha.com
+      https://newassets.hcaptcha.com
+      https://imgs.hcaptcha.com;
+    font-src 'self' data: 
+      https://fonts.gstatic.com
+      https://js.hcaptcha.com
+      https://newassets.hcaptcha.com;
+    connect-src 'self' 
+      https://api.mainnet-beta.solana.com 
+      https://solana-mainnet.g.alchemy.com 
+      https://sly-virulent-owl.solana-mainnet.quiknode.pro 
+      https://terminal.jup.ag 
+      https://lite-api.jup.ag 
+      https://dlmm-api.meteora.ag 
+      https://cdn.jsdelivr.net 
+      https://api.web3auth.io 
+      https://assets.web3auth.io
+      https://auth.web3auth.io
+      https://signer-service.web3auth.io
+      https://session-service.web3auth.io
+      https://js.hcaptcha.com
+      https://newassets.hcaptcha.com
+      https://api.hcaptcha.com
+      https://hcaptcha.com
+      https://accounts.hcaptcha.com
+      https://sentry.hcaptcha.com
+      https://cdn.segment.com
+      https://api.segment.io
+      https://o503538.ingest.sentry.io
+      https://o503538.ingest.us.sentry.io
+      wss:;
+    frame-src 'self' 
+      https://auth.web3auth.io 
+      https://wallet.web3auth.io
+      https://js.hcaptcha.com
+      https://newassets.hcaptcha.com
+      https://assets.hcaptcha.com;
+    worker-src 'self' blob:;
     object-src 'none';
     base-uri 'self';
     form-action 'self';
