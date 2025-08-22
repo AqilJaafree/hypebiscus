@@ -9,7 +9,7 @@ import { Loader2, Info, AlertTriangle, CheckCircle, ChevronDown, ChevronUp } fro
 // Traditional wallet hooks
 import { useWallet } from "@solana/wallet-adapter-react";
 
-// Web3Auth hooks - Simple imports
+// Web3Auth hooks - Simple imports  
 import { useWeb3AuthConnect } from '@web3auth/modal/react';
 import { useSolanaWallet, useSignAndSendTransaction } from '@web3auth/modal/react/solana';
 
@@ -81,7 +81,7 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
     sendTransaction: traditionalSendTransaction 
   } = useWallet();
   
-  // Web3Auth hooks - Simple usage
+  // Web3Auth hooks - Complete setup
   const { isConnected: web3AuthConnected } = useWeb3AuthConnect();
   const { accounts, connection: web3AuthConnection } = useSolanaWallet();
   const { signAndSendTransaction, loading: signAndSendLoading, error: signAndSendError } = useSignAndSendTransaction();
@@ -90,7 +90,7 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
   const { service: positionService } = useMeteoraPositionService();
   const tokens = useTokenData();
   
-  // 🔥 FIXED WALLET DETECTION LOGIC
+  // 🔥 CORRECTED WALLET DETECTION LOGIC
   const walletInfo = useMemo(() => {
     // Check traditional wallet first
     if (traditionalConnected && traditionalPublicKey) {
@@ -104,20 +104,20 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
       };
     }
     
-    // Check Web3Auth wallet (including Solflare through Web3Auth)
-    if (web3AuthConnected && accounts && accounts.length > 0) {
+    // Check Web3Auth wallet - CORRECTED LOGIC
+    if (web3AuthConnected && accounts && accounts.length > 0 && web3AuthConnection) {
       try {
         const publicKey = new PublicKey(accounts[0]);
         console.log('✅ Web3Auth wallet detected:', publicKey.toBase58());
         
-        // 🔥 FIX: Ensure signAndSendTransaction is available for Web3Auth
-        const canTransact = !!signAndSendTransaction && !signAndSendLoading;
+        // 🔥 KEY FIX: Use connection and signAndSendTransaction availability
+        const canTransact = !!signAndSendTransaction && !!web3AuthConnection && !signAndSendLoading;
         
         return {
           type: 'web3auth' as const,
           publicKey,
           isConnected: true,
-          canTransact, // ← This was the issue
+          canTransact,
           walletName: 'Web3Auth Wallet'
         };
       } catch (error) {
@@ -132,11 +132,12 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
       publicKey: null,
       isConnected: false,
       canTransact: false,
-      walletName: 'None'
+      walletName: 'None',
+      provider: null
     };
-  }, [traditionalConnected, traditionalPublicKey, web3AuthConnected, accounts, signAndSendTransaction, signAndSendLoading]);
+      }, [traditionalConnected, traditionalPublicKey, web3AuthConnected, accounts, web3AuthConnection, signAndSendTransaction, signAndSendLoading]);
 
-  // Debug output in development
+  // Enhanced debug output
   useEffect(() => {
     if (process.env.NODE_ENV === 'development') {
       console.log('🔧 AddLiquidityModal Wallet State:', {
@@ -145,11 +146,18 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
         canTransact: walletInfo.canTransact,
         publicKey: walletInfo.publicKey?.toBase58(),
         walletName: walletInfo.walletName,
+        hasProvider: !!accounts,
         signAndSendLoading,
-        signAndSendError: signAndSendError?.message
+        signAndSendError: signAndSendError?.message,
+        web3AuthDebug: {
+          connected: web3AuthConnected,
+          hasAccounts: !!accounts?.length,
+          hasConnection: !!web3AuthConnection,
+          hasSignFunction: !!signAndSendTransaction
+        }
       });
     }
-  }, [walletInfo, signAndSendLoading, signAndSendError]);
+  }, [walletInfo, signAndSendLoading, signAndSendError, web3AuthConnected, accounts, web3AuthConnection, signAndSendTransaction]);
 
   // State management
   const [amount, setAmount] = useState('');
@@ -185,7 +193,7 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
 
   const { tokenX } = getTokenNames();
 
-  // Simplified strategy options
+  // Strategy options
   const strategyOptions: StrategyOption[] = useMemo(() => {
     if (existingBinRanges.length === 0) return [];
     
@@ -230,12 +238,11 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
 
   const selectedStrategyOption = strategyOptions.find(opt => opt.id === selectedStrategy);
 
-  // Fixed balance fetching function - works with both wallet types
+  // Token balance fetching
   const fetchUserTokenBalance = useCallback(async () => {
     if (!walletInfo.publicKey || !pool) return;
 
     try {
-      // Use appropriate connection based on wallet type
       let connection: Connection;
       
       if (walletInfo.type === 'web3auth' && web3AuthConnection) {
@@ -246,10 +253,8 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
         );
       }
 
-      // Extract the token symbol from pool name
       const { tokenX } = getTokenNames();
       
-      // Define known token mint addresses on Solana mainnet
       const TOKEN_MINTS: Record<string, string> = {
         'wBTC': '3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh',
         'zBTC': 'zBTCug3er3tLyffELcvDNrKkCymbPWysGcWihESYfLg',
@@ -257,10 +262,8 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
         'SOL': 'So11111111111111111111111111111111111111112'
       };
 
-      // Get the target token mint address
       let targetTokenMint: string | undefined = TOKEN_MINTS[tokenX];
       
-      // Fallback: if not in our predefined list, try to find via token registry
       if (!targetTokenMint && tokens.length > 0) {
         const tokenInfo = tokens.find(t => 
           t.symbol === tokenX || 
@@ -276,13 +279,11 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
         return;
       }
 
-      // Get all token accounts for the user
       const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
         walletInfo.publicKey,
         { programId: TOKEN_PROGRAM_ID }
       );
 
-      // Find the specific token account that matches our target mint
       const targetAccount = tokenAccounts.value.find(account => {
         const mintAddress = account.account.data.parsed.info.mint;
         return mintAddress === targetTokenMint;
@@ -301,7 +302,7 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
     }
   }, [walletInfo.publicKey, walletInfo.type, pool, tokens, getTokenNames, web3AuthConnection]);
 
-  // Find existing bin ranges
+  // Bin ranges logic
   const findExistingBinRanges = useCallback(async (poolAddress: string) => {
     if (findingBinsRef.current || !poolAddress) return;
 
@@ -370,7 +371,7 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
     }
   }, [actualPortfolioStyle, dlmmService, positionService, currentBinId]);
 
-  // Load existing bins when modal opens
+  // Effects
   useEffect(() => {
     if (isOpen && pool && pool.address !== poolAddressRef.current && !binRangesLoaded && !isLoadingBins) {
       poolAddressRef.current = pool.address;
@@ -378,7 +379,6 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
     }
   }, [isOpen, pool, binRangesLoaded, isLoadingBins, findExistingBinRanges]);
 
-  // Reset state when modal closes
   useEffect(() => {
     if (!isOpen) {
       setBinRangesLoaded(false);
@@ -396,14 +396,13 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
     }
   }, [isOpen]);
 
-  // Fetch user's token balance
   useEffect(() => {
     if (isOpen && walletInfo.publicKey && pool) {
       fetchUserTokenBalance();
     }
   }, [isOpen, walletInfo.publicKey, pool, fetchUserTokenBalance]);
 
-  // Handle percentage buttons
+  // Input handlers
   const handlePercentageClick = useCallback((percentage: number) => {
     if (isUpdatingAmount) return;
     
@@ -425,7 +424,6 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
     }, 300);
   }, [userTokenBalance, isUpdatingAmount, tokenX]);
 
-  // Handle max button
   const handleMaxClick = useCallback(() => {
     if (isUpdatingAmount) return;
     
@@ -447,7 +445,7 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
     }, 300);
   }, [userTokenBalance, tokenX, isUpdatingAmount]);
 
-  // Balance checking - works with both wallet types
+  // Balance checking
   const checkUserBalances = useCallback(async () => {
     if (!walletInfo.publicKey || !pool || !amount || parseFloat(amount) <= 0 || !selectedStrategyOption) return;
 
@@ -455,7 +453,6 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
     setValidationError('');
 
     try {
-      // Use appropriate connection based on wallet type
       let connection: Connection;
       
       if (walletInfo.type === 'web3auth' && web3AuthConnection) {
@@ -513,11 +510,10 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
     }
   };
 
-  // 🔥 FIXED TRANSACTION HANDLER
+  // 🔥 CORRECTED TRANSACTION HANDLER
   const handleAddLiquidity = async () => {
     console.log('🚀 Starting transaction with wallet:', walletInfo);
 
-    // Enhanced validation
     if (!walletInfo.isConnected) {
       showToast.error('Wallet Not Connected', 'Please connect your wallet first.');
       return;
@@ -545,7 +541,6 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
       return;
     }
 
-    // Check for ongoing Web3Auth transaction
     if (signAndSendLoading) {
       showToast.warning('Transaction in Progress', 'Please wait for the current transaction to complete.');
       return;
@@ -566,7 +561,6 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
         bnAmount: bnAmount.toString()
       });
 
-      // Create the position transaction
       const result = await positionService.createPositionWithExistingBins({
         poolAddress: pool.address,
         userPublicKey: walletInfo.publicKey,
@@ -580,7 +574,7 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
       
       console.log('📋 Position created, processing transactions...');
       
-      // 🔥 FIXED TRANSACTION HANDLING
+      // 🔥 CORRECTED TRANSACTION HANDLING
       if (walletInfo.type === 'traditional') {
         console.log('💳 Processing with traditional wallet...');
         const connection = new Connection(
@@ -604,19 +598,31 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
           throw new Error('Web3Auth signing function not available');
         }
         
-        // Handle both single and array transactions
+        if (!web3AuthConnection) {
+          throw new Error('Web3Auth connection not available');
+        }
+        
+        // Modern Web3Auth approach using only the React hooks
         if (Array.isArray(result.transaction)) {
           for (const tx of result.transaction) {
             try {
+              // Ensure transaction has required fields
+              if (!tx.recentBlockhash) {
+                const block = await web3AuthConnection.getLatestBlockhash("finalized");
+                tx.recentBlockhash = block.blockhash;
+                tx.lastValidBlockHeight = block.lastValidBlockHeight;
+              }
+              if (!tx.feePayer) {
+                tx.feePayer = walletInfo.publicKey;
+              }
+              
               const signature = await signAndSendTransaction(tx);
               console.log('✅ Web3Auth transaction signature:', signature);
               
-              // Wait for confirmation if connection is available
-              if (web3AuthConnection) {
-                const confirmation = await web3AuthConnection.confirmTransaction(signature, 'confirmed');
-                if (confirmation.value.err) {
-                  throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
-                }
+              // Wait for confirmation
+              const confirmation = await web3AuthConnection.confirmTransaction(signature, 'confirmed');
+              if (confirmation.value.err) {
+                throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
               }
             } catch (txError) {
               console.error('❌ Web3Auth transaction error:', txError);
@@ -625,15 +631,23 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
           }
         } else {
           try {
+            // Ensure transaction has required fields
+            if (!result.transaction.recentBlockhash) {
+              const block = await web3AuthConnection.getLatestBlockhash("finalized");
+              result.transaction.recentBlockhash = block.blockhash;
+              result.transaction.lastValidBlockHeight = block.lastValidBlockHeight;
+            }
+            if (!result.transaction.feePayer) {
+              result.transaction.feePayer = walletInfo.publicKey;
+            }
+            
             const signature = await signAndSendTransaction(result.transaction);
             console.log('✅ Web3Auth transaction signature:', signature);
             
-            // Wait for confirmation if connection is available
-            if (web3AuthConnection) {
-              const confirmation = await web3AuthConnection.confirmTransaction(signature, 'confirmed');
-              if (confirmation.value.err) {
-                throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
-              }
+            // Wait for confirmation
+            const confirmation = await web3AuthConnection.confirmTransaction(signature, 'confirmed');
+            if (confirmation.value.err) {
+              throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
             }
           } catch (txError) {
             console.error('❌ Web3Auth transaction error:', txError);
@@ -662,7 +676,6 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
       if (error instanceof Error) {
         errorMessage = error.message;
         
-        // Handle Web3Auth specific errors
         if (walletInfo.type === 'web3auth') {
           if (errorMessage.includes('User rejected') || errorMessage.includes('user denied')) {
             showToast.warning('Transaction Cancelled', 'You cancelled the transaction. Your funds are safe.');
@@ -689,7 +702,6 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
     }
   };
 
-  // Enhanced connection checks
   const isAnyWalletConnected = walletInfo.isConnected;
   const canTransact = walletInfo.canTransact;
 
@@ -720,7 +732,6 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
                 How much {tokenX} do you want to add?
               </label>
               
-              {/* Token Balance Display */}
               {walletInfo.publicKey && (
                 <div className="flex justify-between items-center text-xs text-sub-text">
                   <span>Available:</span>
@@ -950,6 +961,19 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
                </div>
              )}
            </div>
+
+           {/* Debug Panel (Development Only) */}
+           {process.env.NODE_ENV === 'development' && (
+             <div className="bg-blue-500/20 border border-blue-500/50 rounded-lg p-4">
+               <div className="text-sm text-blue-200 mb-2">Debug Panel (Development Only)</div>
+               <div className="text-xs text-blue-200 space-y-1">
+                 <div>Wallet Type: {walletInfo.type}</div>
+                 <div>Can Transact: {walletInfo.canTransact ? '✅' : '❌'}</div>
+                 <div>Sign Function: {typeof signAndSendTransaction === 'function' ? '✅' : '❌'}</div>
+                 <div>Loading: {signAndSendLoading ? '⏳' : '✅'}</div>
+               </div>
+             </div>
+           )}
          </div>
          
          <DialogFooter className="mt-8 flex flex-col gap-3 sm:flex-row">
