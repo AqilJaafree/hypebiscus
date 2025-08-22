@@ -1,4 +1,6 @@
 // src/components/dashboard-components/AddLiquidityModal.tsx
+"use client";
+
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -88,7 +90,7 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
   const { service: positionService } = useMeteoraPositionService();
   const tokens = useTokenData();
   
-  // Simple wallet detection
+  // 🔥 FIXED WALLET DETECTION LOGIC
   const walletInfo = useMemo(() => {
     // Check traditional wallet first
     if (traditionalConnected && traditionalPublicKey) {
@@ -102,18 +104,21 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
       };
     }
     
-    // Check Web3Auth wallet
+    // Check Web3Auth wallet (including Solflare through Web3Auth)
     if (web3AuthConnected && accounts && accounts.length > 0) {
       try {
         const publicKey = new PublicKey(accounts[0]);
         console.log('✅ Web3Auth wallet detected:', publicKey.toBase58());
         
+        // 🔥 FIX: Ensure signAndSendTransaction is available for Web3Auth
+        const canTransact = !!signAndSendTransaction && !signAndSendLoading;
+        
         return {
           type: 'web3auth' as const,
           publicKey,
           isConnected: true,
-          canTransact: true,
-          walletName: 'Web3Auth Social Login'
+          canTransact, // ← This was the issue
+          walletName: 'Web3Auth Wallet'
         };
       } catch (error) {
         console.error('❌ Invalid Web3Auth account format:', error);
@@ -129,7 +134,7 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
       canTransact: false,
       walletName: 'None'
     };
-  }, [traditionalConnected, traditionalPublicKey, web3AuthConnected, accounts]);
+  }, [traditionalConnected, traditionalPublicKey, web3AuthConnected, accounts, signAndSendTransaction, signAndSendLoading]);
 
   // Debug output in development
   useEffect(() => {
@@ -508,7 +513,7 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
     }
   };
 
-  // Simple transaction handler
+  // 🔥 FIXED TRANSACTION HANDLER
   const handleAddLiquidity = async () => {
     console.log('🚀 Starting transaction with wallet:', walletInfo);
 
@@ -575,7 +580,7 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
       
       console.log('📋 Position created, processing transactions...');
       
-      // Handle transactions based on wallet type
+      // 🔥 FIXED TRANSACTION HANDLING
       if (walletInfo.type === 'traditional') {
         console.log('💳 Processing with traditional wallet...');
         const connection = new Connection(
