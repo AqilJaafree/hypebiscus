@@ -3,6 +3,10 @@
 import React from "react";
 import { Button } from "@/components/ui/button";
 import { useWallet } from "@solana/wallet-adapter-react";
+// 🔥 ADD THESE IMPORTS FOR WEB3AUTH
+import { useWeb3AuthConnect } from '@web3auth/modal/react';
+import { useSolanaWallet } from '@web3auth/modal/react/solana';
+
 import { ArrowSquareIn} from "@phosphor-icons/react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { FormattedPool } from "@/lib/utils/poolUtils";
@@ -28,7 +32,27 @@ const BtcPoolsList: React.FC<BtcPoolsListProps> = ({
   isStreaming,
   streamingContent,
 }) => {
-  const { connected } = useWallet();
+  // Traditional wallet
+  const { connected: traditionalConnected } = useWallet();
+  
+  // 🔥 WEB3AUTH WALLET DETECTION
+  const { isConnected: web3AuthConnected } = useWeb3AuthConnect();
+  const { accounts } = useSolanaWallet();
+  
+  // 🔥 FIXED: Check for ANY wallet connection
+  const isAnyWalletConnected = traditionalConnected || (web3AuthConnected && accounts && accounts.length > 0);
+
+  // Debug logging
+  React.useEffect(() => {
+    if (process.env.NODE_ENV === 'development') {
+      console.log('🔍 BtcPoolsList Wallet State:', {
+        traditional: traditionalConnected,
+        web3Auth: web3AuthConnected,
+        hasAccounts: !!accounts?.length,
+        finalDecision: isAnyWalletConnected
+      });
+    }
+  }, [traditionalConnected, web3AuthConnected, accounts, isAnyWalletConnected]);
 
   // Helper function to find a good split point for streaming content
   const findSplitPoint = (text: string): number => {
@@ -170,14 +194,25 @@ const BtcPoolsList: React.FC<BtcPoolsListProps> = ({
                 </span>
               </div>
               <div>
+                {/* 🔥 FIXED BUTTON - Now checks for ANY wallet connection */}
                 <Button
                   variant="default"
                   size="secondary"
-                  onClick={() => onAddLiquidity(pool)}
-                  disabled={!connected || isLoading}
+                  onClick={() => {
+                    console.log('🚀 Invest button clicked!', { 
+                      pool: pool.name, 
+                      address: pool.address,
+                      isAnyWalletConnected,
+                      traditionalConnected,
+                      web3AuthConnected,
+                      hasAccounts: !!accounts?.length
+                    });
+                    onAddLiquidity(pool);
+                  }}
+                  disabled={!isAnyWalletConnected || isLoading}
                   className="w-full lg:w-fit mt-6 lg:mt-0"
                 >
-                  {connected
+                  {isAnyWalletConnected
                     ? "Invest in this Pool"
                     : "Connect Wallet to Invest"}
                 </Button>
