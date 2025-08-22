@@ -1,4 +1,4 @@
-// src/components/header.tsx - Updated with proper Web3Auth Modal integration
+// src/components/header.tsx
 "use client";
 
 import { useState, useEffect } from "react";
@@ -10,12 +10,11 @@ import {
   NavigationMenuLink,
   NavigationMenuList,
   NavigationMenuTrigger,
-} from "@/components/ui/navigation-menu"
-import {HouseIcon, LightningAIcon, WalletIcon, ListIcon} from "@phosphor-icons/react"
+} from "@/components/ui/navigation-menu";
+import { HouseIcon, LightningAIcon, WalletIcon, ListIcon } from "@phosphor-icons/react";
 import Link from "next/link";
 import Image from "next/image";
 import { useWallet } from "@solana/wallet-adapter-react";
-// Updated Web3Auth imports for modal package
 import { useWeb3AuthConnect, useWeb3AuthDisconnect, useWeb3AuthUser } from "@web3auth/modal/react";
 import { useSolanaWallet } from "@web3auth/modal/react/solana";
 import { Button } from "@/components/ui/button";
@@ -38,7 +37,7 @@ const Header = () => {
     disconnect: traditionalDisconnect 
   } = useWallet();
   
-  // Web3Auth Modal hooks - Updated imports
+  // Web3Auth hooks - Simple usage
   const { 
     isConnected: web3AuthConnected, 
     connect: web3AuthConnect, 
@@ -51,9 +50,7 @@ const Header = () => {
   } = useWeb3AuthDisconnect();
   
   const { userInfo } = useWeb3AuthUser();
-  
-  // Access to Solana wallet data from Web3Auth Modal
-  const { accounts: web3AuthAccounts } = useSolanaWallet();
+  const { accounts } = useSolanaWallet();
 
   // Combined connection state
   const isAnyWalletConnected = traditionalConnected || web3AuthConnected;
@@ -63,7 +60,7 @@ const Header = () => {
     setMounted(true);
   }, []);
 
-  // Handle Web3Auth disconnect properly
+  // Handle Web3Auth disconnect
   const handleWeb3AuthDisconnect = async () => {
     if (web3AuthConnected) {
       try {
@@ -83,32 +80,32 @@ const Header = () => {
     }
   };
 
-  // Get actual wallet address
+  // Get wallet address
   const getWalletAddress = () => {
     if (traditionalConnected && traditionalPublicKey) {
       return traditionalPublicKey.toBase58();
     }
-    // Return actual Solana address from Web3Auth Modal
-    if (web3AuthConnected && web3AuthAccounts?.[0]) {
-      return web3AuthAccounts[0];
+    // Return actual Solana address from Web3Auth
+    if (web3AuthConnected && accounts?.[0]) {
+      return accounts[0];
     }
     return 'Not connected';
   };
 
   // Get display info for connected wallet
   const getWalletDisplayInfo = () => {
-    if (traditionalConnected) {
+    if (traditionalConnected && traditionalPublicKey) {
       return {
         type: 'Traditional Wallet',
-        address: getWalletAddress(),
+        address: traditionalPublicKey.toBase58(),
         canShowAddress: true
       };
     }
-    if (web3AuthConnected) {
+    if (web3AuthConnected && accounts?.[0]) {
       return {
         type: 'Social Login',
-        address: getWalletAddress(),
-        canShowAddress: !!web3AuthAccounts?.[0],
+        address: accounts[0],
+        canShowAddress: true,
         userInfo: userInfo
       };
     }
@@ -119,33 +116,41 @@ const Header = () => {
 
   return (
     <div className="flex justify-between items-center lg:px-[70px] px-4 lg:pt-4 pt-2 lg:pb-0 pb-2">
-      <Image src="/hypebiscus_logo.png" alt="Hypebiscus" width={70} height={70} unoptimized/>
+      <Image 
+        src="/hypebiscus_logo.png" 
+        alt="Hypebiscus" 
+        width={70} 
+        height={70} 
+        unoptimized
+      />
       
       <div className="flex items-center gap-4">
         {/* Mobile Navigation Menu */}
         <NavigationMenu className="lg:hidden block">
           <NavigationMenuList>
             <NavigationMenuItem>
-              <NavigationMenuTrigger className="flex items-center gap-2"><ListIcon /></NavigationMenuTrigger>
+              <NavigationMenuTrigger className="flex items-center gap-2">
+                <ListIcon />
+              </NavigationMenuTrigger>
               <NavigationMenuContent>
                 <ul className="flex flex-col gap-y-4 p-2">
                   <li>
                     <NavigationMenuLink asChild>
-                      <Link href="/">
+                      <Link href="/" className="flex items-center gap-2">
                         <HouseIcon className="text-primary"/> Home
                       </Link>
                     </NavigationMenuLink>
                   </li>
                   <li>
                     <NavigationMenuLink asChild>
-                      <Link href="/wallet">
+                      <Link href="/wallet" className="flex items-center gap-2">
                         <WalletIcon className="text-primary"/> Wallet
                       </Link>
                     </NavigationMenuLink>
                   </li>
                   <li>
                     <NavigationMenuLink asChild>
-                      <Link href="/bridge">
+                      <Link href="/bridge" className="flex items-center gap-2">
                         <LightningAIcon className="text-primary"/> Bridge
                       </Link>
                     </NavigationMenuLink>
@@ -171,7 +176,7 @@ const Header = () => {
                       {walletInfo.address.slice(0, 4)}...{walletInfo.address.slice(-4)}
                     </span>
                   )}
-                  {/* Show user email for social login */}
+                  {/* Show user email for social login if available */}
                   {walletInfo.userInfo?.email && (
                     <span className="text-gray-400 text-xs truncate max-w-[120px]">
                       {String(walletInfo.userInfo.email)}
@@ -222,6 +227,22 @@ const Header = () => {
                   }}
                 />
               </div>
+            )}
+          </div>
+        )}
+
+        {/* Debug Info for Development */}
+        {mounted && process.env.NODE_ENV === 'development' && (
+          <div className="fixed bottom-4 left-4 bg-black/80 text-white p-2 rounded text-xs max-w-xs z-50">
+            <div className="font-bold mb-1">Wallet Debug:</div>
+            <div>Traditional: {traditionalConnected ? '✅' : '❌'}</div>
+            <div>Web3Auth: {web3AuthConnected ? '✅' : '❌'}</div>
+            <div>Address: {getWalletAddress().slice(0, 8)}...</div>
+            {web3AuthConnected && (
+              <>
+                <div>Accounts: {accounts?.length || 0}</div>
+                <div>Email: {userInfo?.email ? String(userInfo.email).slice(0, 15) : 'N/A'}</div>
+              </>
             )}
           </div>
         )}
