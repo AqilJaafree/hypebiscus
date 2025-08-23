@@ -1,4 +1,4 @@
-// Enhanced meteoraDlmmService.ts - Removed bin creation functionality
+// Enhanced meteoraDlmmService.ts - FIXED VERSION with Web3Auth Support
 // Users can only interact with existing bins to prevent expensive bin creation
 
 import DLMM, { StrategyType, autoFillYByStrategy } from '@meteora-ag/dlmm';
@@ -27,6 +27,7 @@ export enum DLMMErrorType {
   NO_EXISTING_BINS = 'NO_EXISTING_BINS',
   TRANSACTION_SIMULATION_FAILED = 'TRANSACTION_SIMULATION_FAILED',
   NETWORK_ERROR = 'NETWORK_ERROR',
+  CONNECTION_ERROR = 'CONNECTION_ERROR',
   UNKNOWN_ERROR = 'UNKNOWN_ERROR'
 }
 
@@ -52,6 +53,8 @@ export class DLMMError extends Error {
         return 'No existing price ranges available. Please wait for more liquidity or select a different pool.';
       case DLMMErrorType.TRANSACTION_SIMULATION_FAILED:
         return 'Transaction simulation failed. The existing bins might be full or have restrictions.';
+      case DLMMErrorType.CONNECTION_ERROR:
+        return 'Connection error. Please check your wallet connection and try again.';
       case DLMMErrorType.NETWORK_ERROR:
         return 'Network error. Please check your connection and try again.';
       default:
@@ -174,6 +177,7 @@ interface DLMMPool {
 /**
  * Enhanced Service to interact with Meteora DLMM - EXISTING BINS ONLY
  * This version prevents expensive bin creation by only using existing price ranges
+ * 🔥 FIXED: Now supports Web3Auth connections
  */
 export class MeteoraDlmmService {
   private _connection: Connection;
@@ -188,14 +192,97 @@ export class MeteoraDlmmService {
   }
 
   /**
+   * 🔥 NEW: Method to check if pool can be initialized with given connection
+   */
+  async validatePoolConnection(poolAddress: string, connection: Connection): Promise<boolean> {
+    try {
+      console.log('🔍 Validating pool connection:', {
+        poolAddress: poolAddress.substring(0, 8) + '...',
+        rpcEndpoint: connection.rpcEndpoint
+      });
+
+      const pubkey = new PublicKey(poolAddress);
+      const pool = await DLMM.create(connection, pubkey);
+      
+      // Try to get basic pool info to validate connection works
+      const typedPool = pool as unknown as DLMMPool;
+      await typedPool.getActiveBin();
+      
+      console.log('✅ Pool connection validated successfully');
+      return true;
+    } catch (error) {
+      console.error('❌ Pool connection validation failed:', error);
+      return false;
+    }
+  }
+
+  /**
+   * 🔥 CRITICAL FIX: Enhanced pool initialization with Web3Auth support
+   */
+  async initializePool(poolAddress: string, customConnection?: Connection): Promise<DlmmType> {
+    try {
+      // Create cache key that includes connection info
+      const connectionKey = customConnection ? 'custom' : 'default';
+      const cacheKey = `${poolAddress}-${connectionKey}`;
+      
+      if (this.poolInstances.has(cacheKey)) {
+        console.log('📋 Using cached pool instance for:', poolAddress.substring(0, 8) + '...');
+        return this.poolInstances.get(cacheKey)!;
+      }
+
+      // Use custom connection if provided (for Web3Auth), otherwise use default
+      const connectionToUse = customConnection || this._connection;
+      
+      console.log('🔧 Initializing DLMM pool with connection:', {
+        poolAddress: poolAddress.substring(0, 8) + '...',
+        rpcEndpoint: connectionToUse.rpcEndpoint,
+        usingCustomConnection: !!customConnection,
+        cacheKey
+      });
+
+      // Validate connection first
+      const isValidConnection = await this.validatePoolConnection(poolAddress, connectionToUse);
+      if (!isValidConnection) {
+        throw new DLMMError(
+          DLMMErrorType.CONNECTION_ERROR,
+          'Unable to establish connection to DLMM pool'
+        );
+      }
+
+      const pubkey = new PublicKey(poolAddress);
+      const pool = await DLMM.create(connectionToUse, pubkey);
+      
+      // Cache the pool with connection-specific key
+      this.poolInstances.set(cacheKey, pool);
+      
+      console.log('✅ DLMM pool initialized successfully');
+      return pool;
+    } catch (error) {
+      console.error('❌ Failed to initialize DLMM pool:', error);
+      
+      if (error instanceof DLMMError) {
+        throw error;
+      }
+      
+      throw new DLMMError(
+        DLMMErrorType.INVALID_POOL,
+        'Failed to initialize DLMM pool',
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+  }
+
+  /**
    * Simplified balance validation for existing bins strategy
    */
   async validateUserBalance(
     userPublicKey: PublicKey,
-    requiredSolAmount: number
+    requiredSolAmount: number,
+    customConnection?: Connection
   ): Promise<SimplifiedBalanceValidation> {
     try {
-      const solBalanceLamports = await this._connection.getBalance(userPublicKey);
+      const connectionToUse = customConnection || this._connection;
+      const solBalanceLamports = await connectionToUse.getBalance(userPublicKey);
       const solBalance = solBalanceLamports / LAMPORTS_PER_SOL;
       
       // Only need position rent + transaction fees (no bin creation costs)
@@ -233,33 +320,11 @@ export class MeteoraDlmmService {
   }
 
   /**
-   * Enhanced pool initialization with error handling
+   * 🔥 UPDATED: Get active bin with connection support
    */
-  async initializePool(poolAddress: string): Promise<DlmmType> {
+  async getActiveBin(poolAddress: string, customConnection?: Connection): Promise<ActiveBin> {
     try {
-      if (this.poolInstances.has(poolAddress)) {
-        return this.poolInstances.get(poolAddress)!;
-      }
-
-      const pubkey = new PublicKey(poolAddress);
-      const pool = await DLMM.create(this._connection, pubkey);
-      this.poolInstances.set(poolAddress, pool);
-      return pool;
-    } catch (error) {
-      throw new DLMMError(
-        DLMMErrorType.INVALID_POOL,
-        'Failed to initialize DLMM pool',
-        error instanceof Error ? error.message : String(error)
-      );
-    }
-  }
-
-  /**
-   * Get active bin with error handling
-   */
-  async getActiveBin(poolAddress: string): Promise<ActiveBin> {
-    try {
-      const pool = await this.initializePool(poolAddress);
+      const pool = await this.initializePool(poolAddress, customConnection);
       const typedPool = pool as unknown as DLMMPool;
       const activeBin = await typedPool.getActiveBin();
       
@@ -279,11 +344,16 @@ export class MeteoraDlmmService {
   }
 
   /**
-   * Check if bins exist in a given range using a safe approach
+   * 🔥 UPDATED: Check existing bins with connection support
    */
-  async checkExistingBins(poolAddress: string, minBinId: number, maxBinId: number): Promise<number[]> {
+  async checkExistingBins(
+    poolAddress: string, 
+    minBinId: number, 
+    maxBinId: number,
+    customConnection?: Connection
+  ): Promise<number[]> {
     try {
-      const pool = await this.initializePool(poolAddress);
+      const pool = await this.initializePool(poolAddress, customConnection);
       const typedPool = pool as unknown as DLMMPool;
       
       const existingBins: number[] = [];
@@ -376,13 +446,15 @@ export class MeteoraDlmmService {
   }
 
   /**
-   * Simplified transaction simulation for existing bins
+   * 🔥 UPDATED: Simplified transaction simulation with connection support
    */
   async simulateTransaction(
-    transaction: Transaction
+    transaction: Transaction,
+    customConnection?: Connection
   ): Promise<{ success: boolean; error?: DLMMError }> {
     try {
-      const simulation = await this._connection.simulateTransaction(transaction, []);
+      const connectionToUse = customConnection || this._connection;
+      const simulation = await connectionToUse.simulateTransaction(transaction, []);
       
       if (simulation.value.err) {
         const errorMessage = JSON.stringify(simulation.value.err);
@@ -420,7 +492,9 @@ export class MeteoraDlmmService {
     }
   }
 
-  // Keep all existing methods but remove bin creation logic
+  /**
+   * 🔥 UPDATED: Get all pools with connection support
+   */
   async getAllPools(): Promise<DlmmPoolInfo[]> {
     try {
       const response = await fetch('https://dlmm-api.meteora.ag/pair/all');
@@ -454,9 +528,16 @@ export class MeteoraDlmmService {
     }
   }
 
-  async getUserPositions(poolAddress: string, userPublicKey: PublicKey): Promise<DlmmPositionInfo[]> {
+  /**
+   * 🔥 UPDATED: Get user positions with connection support
+   */
+  async getUserPositions(
+    poolAddress: string, 
+    userPublicKey: PublicKey,
+    customConnection?: Connection
+  ): Promise<DlmmPositionInfo[]> {
     try {
-      const pool = await this.initializePool(poolAddress);
+      const pool = await this.initializePool(poolAddress, customConnection);
       const typedPool = pool as unknown as DLMMPool;
       const { userPositions } = await typedPool.getPositionsByUserAndLbPair(userPublicKey);
       
@@ -489,15 +570,16 @@ export class MeteoraDlmmService {
   }
 
   /**
-   * Get swap quote for token exchange
+   * 🔥 UPDATED: Get swap quote with connection support
    */
   async getSwapQuote(
     poolAddress: string,
     amountIn: BN,
-    swapForY: boolean
+    swapForY: boolean,
+    customConnection?: Connection
   ): Promise<SwapQuote> {
     try {
-      const pool = await this.initializePool(poolAddress);
+      const pool = await this.initializePool(poolAddress, customConnection);
       const typedPool = pool as unknown as DLMMPool;
       
       const quote = await typedPool.getSwapQuote({
@@ -524,17 +606,18 @@ export class MeteoraDlmmService {
   }
 
   /**
-   * Execute a swap transaction
+   * 🔥 UPDATED: Execute swap with connection support
    */
   async swap(
     poolAddress: string,
     userPublicKey: PublicKey,
     amountIn: BN,
     minAmountOut: BN,
-    swapForY: boolean
+    swapForY: boolean,
+    customConnection?: Connection
   ): Promise<Transaction> {
     try {
-      const pool = await this.initializePool(poolAddress);
+      const pool = await this.initializePool(poolAddress, customConnection);
       const typedPool = pool as unknown as DLMMPool;
       
       const swapTx = await typedPool.swap({
@@ -555,15 +638,16 @@ export class MeteoraDlmmService {
   }
 
   /**
-   * Validate that a range only uses existing bins
+   * 🔥 UPDATED: Validate existing bins with connection support
    */
   async validateExistingBinsOnly(
     poolAddress: string,
     minBinId: number,
-    maxBinId: number
+    maxBinId: number,
+    customConnection?: Connection
   ): Promise<{ isValid: boolean; existingBins: number[]; error?: string }> {
     try {
-      const existingBins = await this.checkExistingBins(poolAddress, minBinId, maxBinId);
+      const existingBins = await this.checkExistingBins(poolAddress, minBinId, maxBinId, customConnection);
       
       if (existingBins.length === 0) {
         return {
@@ -594,9 +678,27 @@ export class MeteoraDlmmService {
       };
     }
   }
+
+  /**
+   * 🔥 NEW: Clear cache (useful for connection changes)
+   */
+  clearCache(): void {
+    console.log('🗑️ Clearing DLMM service cache');
+    this.poolInstances.clear();
+  }
+
+  /**
+   * 🔥 NEW: Get cache statistics
+   */
+  getCacheStats(): { totalPools: number; cacheKeys: string[] } {
+    return {
+      totalPools: this.poolInstances.size,
+      cacheKeys: Array.from(this.poolInstances.keys())
+    };
+  }
 }
 
-// Enhanced hook with existing bins validation
+// 🔥 UPDATED: Enhanced hook with Web3Auth validation
 export function useMeteoraDlmmService() {
   const { publicKey, sendTransaction } = useWallet();
   
@@ -609,20 +711,40 @@ export function useMeteoraDlmmService() {
     service,
     publicKey,
     sendTransaction,
-    // Helper function to handle DLMM errors
+    
+    // 🔥 NEW: Helper function to handle DLMM errors
     handleDLMMError: (error: unknown): string => {
       if (error instanceof DLMMError) {
         return error.userFriendlyMessage;
       }
       return 'An unexpected error occurred. Please try again.';
     },
-    // Helper to validate existing bins
+    
+    // 🔥 UPDATED: Helper to validate existing bins with custom connection
     validateExistingBinsRange: async (
       poolAddress: string,
       minBinId: number,
-      maxBinId: number
+      maxBinId: number,
+      customConnection?: Connection
     ) => {
-      return await service.validateExistingBinsOnly(poolAddress, minBinId, maxBinId);
-    }
+      return await service.validateExistingBinsOnly(poolAddress, minBinId, maxBinId, customConnection);
+    },
+    
+    // 🔥 NEW: Helper to validate pool connection
+    validatePoolConnection: async (poolAddress: string, customConnection?: Connection) => {
+      try {
+        const connectionToUse = customConnection || connection;
+        return await service.validatePoolConnection(poolAddress, connectionToUse);
+      } catch (error) {
+        console.error('Pool connection validation failed:', error);
+        return false;
+      }
+    },
+    
+    // 🔥 NEW: Clear service cache
+    clearCache: () => service.clearCache(),
+    
+    // 🔥 NEW: Get cache stats
+    getCacheStats: () => service.getCacheStats()
   };
 }

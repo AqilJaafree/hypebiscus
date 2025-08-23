@@ -1,4 +1,4 @@
-// Enhanced meteoraPositionService.ts - FIXED VERSION with efficient bin detection
+// Enhanced meteoraPositionService.ts - FIXED VERSION with Web3Auth Support
 // No more intensive RPC calls for bin existence checking
 
 import DLMM, { StrategyType, autoFillYByStrategy } from '@meteora-ag/dlmm';
@@ -92,12 +92,14 @@ export interface CreatePositionParams {
   maxBinId: number;
   strategyType: StrategyType;
   useAutoFill?: boolean;
+  connection?: Connection; // 🔥 NEW: Optional connection parameter
 }
 
 export interface PositionManagementParams {
   poolAddress: string;
   positionPubkey: string;
   userPublicKey: PublicKey;
+  connection?: Connection; // 🔥 NEW: Optional connection parameter
 }
 
 export interface RemoveLiquidityParams extends PositionManagementParams {
@@ -145,6 +147,7 @@ const CACHE_DURATION = 120000; // 2 minutes cache
 
 /**
  * Enhanced Service for managing DLMM positions - EXISTING BINS ONLY
+ * 🔥 FIXED: Now supports Web3Auth connections
  * This version uses smart heuristics instead of intensive RPC calls
  */
 export class MeteoraPositionService {
@@ -156,56 +159,85 @@ export class MeteoraPositionService {
   }
 
   /**
-   * Initialize a DLMM pool
+   * 🔥 CRITICAL FIX: Initialize pool with Web3Auth connection support
    */
-  async initializePool(poolAddress: string): Promise<DlmmType> {
+  async initializePool(poolAddress: string, customConnection?: Connection): Promise<DlmmType> {
     try {
-      if (this.poolInstances.has(poolAddress)) {
-        return this.poolInstances.get(poolAddress)!;
+      // Create connection-aware cache key
+      const connectionKey = customConnection ? 'custom' : 'default';
+      const cacheKey = `${poolAddress}-${connectionKey}`;
+      
+      if (this.poolInstances.has(cacheKey)) {
+        console.log('📋 Using cached position service pool for:', poolAddress.substring(0, 8) + '...');
+        return this.poolInstances.get(cacheKey)!;
       }
 
+      // Use custom connection if provided (for Web3Auth)
+      const connectionToUse = customConnection || this.connection;
+      
+      console.log('🔧 Position service initializing pool with connection:', {
+        poolAddress: poolAddress.substring(0, 8) + '...',
+        rpcEndpoint: connectionToUse.rpcEndpoint,
+        usingCustomConnection: !!customConnection,
+        cacheKey
+      });
+
       const pubkey = new PublicKey(poolAddress);
-      const pool = await DLMM.create(this.connection, pubkey);
-      this.poolInstances.set(poolAddress, pool);
+      const pool = await DLMM.create(connectionToUse, pubkey);
+      
+      // Cache with connection-specific key
+      this.poolInstances.set(cacheKey, pool);
+      
+      console.log('✅ Position service pool initialized successfully');
       return pool;
     } catch (error) {
-      console.error('Error initializing Meteora DLMM pool:', error);
+      console.error('❌ Position service failed to initialize pool:', error);
       throw error;
     }
   }
 
   /**
-   * FIXED: Find existing bin ranges using smart heuristics based on portfolio style
+   * 🔥 CRITICAL FIX: Find existing bin ranges with Web3Auth connection support
    * This eliminates the rate limiting issues while respecting user's risk preference
    */
   async findExistingBinRanges(
     poolAddress: string,
     maxRangeWidth: number = 20,
-    portfolioStyle: string = 'conservative'
+    portfolioStyle: string = 'conservative',
+    customConnection?: Connection // 🔥 NEW: Connection parameter
   ): Promise<ExistingBinRange[]> {
     try {
-      // Check cache first (include portfolio style in cache key)
-      const cacheKey = `${poolAddress}-${portfolioStyle}`;
+      // Check cache first (include connection info in cache key)
+      const connectionKey = customConnection ? 'custom' : 'default';
+      const cacheKey = `${poolAddress}-${portfolioStyle}-${connectionKey}`;
       const cached = binRangeCache.get(cacheKey);
       const now = Date.now();
       
       if (cached && (now - cached.timestamp) < CACHE_DURATION) {
-        console.log(`Using cached ${portfolioStyle} bin ranges for pool:`, poolAddress.substring(0, 8));
+        console.log(`📋 Using cached ${portfolioStyle} bin ranges for pool:`, poolAddress.substring(0, 8) + '...');
         return cached.ranges;
       }
 
-      const pool = await this.initializePool(poolAddress);
+      console.log(`🔍 Creating smart ${portfolioStyle} bin ranges with connection:`, {
+        poolAddress: poolAddress.substring(0, 8) + '...',
+        portfolioStyle,
+        usingCustomConnection: !!customConnection,
+        connectionEndpoint: customConnection?.rpcEndpoint || this.connection.rpcEndpoint
+      });
+
+      // 🔥 KEY FIX: Pass custom connection to pool initialization
+      const pool = await this.initializePool(poolAddress, customConnection);
       const typedPool = pool as unknown as DLMMPool;
       const activeBin = await typedPool.getActiveBin();
       
       console.log(`Creating smart ${portfolioStyle} bin ranges around active bin:`, activeBin.binId);
       
-      // FIXED: Use portfolio-specific smart heuristics
+      // Use portfolio-specific smart heuristics
       const existingRanges = this.createSmartBinRanges(activeBin.binId, maxRangeWidth, portfolioStyle);
       
-      console.log(`Generated ${existingRanges.length} smart ${portfolioStyle} bin ranges without RPC calls`);
+      console.log(`✅ Generated ${existingRanges.length} smart ${portfolioStyle} bin ranges`);
       
-      // Cache the results with portfolio style
+      // Cache the results with connection info
       binRangeCache.set(cacheKey, {
         ranges: existingRanges,
         timestamp: now,
@@ -215,7 +247,19 @@ export class MeteoraPositionService {
       return existingRanges;
       
     } catch (error) {
-      console.error('Error finding existing bin ranges:', error);
+      console.error('❌ Error finding existing bin ranges:', error);
+      
+      // Enhanced error context
+      if (error instanceof Error) {
+        console.error('Error context:', {
+          message: error.message,
+          poolAddress: poolAddress.substring(0, 8) + '...',
+          portfolioStyle,
+          hasCustomConnection: !!customConnection,
+          connectionEndpoint: customConnection?.rpcEndpoint || this.connection.rpcEndpoint
+        });
+      }
+      
       throw new Error('Unable to find existing bin ranges for safe liquidity provision');
     }
   }
@@ -424,20 +468,37 @@ export class MeteoraPositionService {
   }
 
   /**
-   * Validate user balance for existing-bins-only strategy
+   * 🔥 UPDATED: Validate user balance with Web3Auth connection support
    */
   async validateUserBalance(
     userPublicKey: PublicKey,
     requiredSolAmount: number,
-    estimatedCost: SimplifiedCostEstimation
+    estimatedCost: SimplifiedCostEstimation,
+    customConnection?: Connection // 🔥 NEW: Connection parameter
   ): Promise<{ isValid: boolean; currentBalance: number; shortfall?: number; error?: string }> {
     try {
-      const solBalanceLamports = await this.connection.getBalance(userPublicKey);
+      const connectionToUse = customConnection || this.connection;
+      
+      console.log('💰 Validating user balance with connection:', {
+        userAddress: userPublicKey.toBase58().substring(0, 8) + '...',
+        requiredAmount: requiredSolAmount,
+        estimatedCost: estimatedCost.total,
+        usingCustomConnection: !!customConnection,
+        connectionEndpoint: connectionToUse.rpcEndpoint
+      });
+
+      const solBalanceLamports = await connectionToUse.getBalance(userPublicKey);
       const solBalance = solBalanceLamports / LAMPORTS_PER_SOL;
       
       const totalRequired = requiredSolAmount + estimatedCost.total;
       
       if (solBalance < totalRequired) {
+        console.log('❌ Insufficient balance:', {
+          available: solBalance.toFixed(4),
+          required: totalRequired.toFixed(4),
+          shortfall: (totalRequired - solBalance).toFixed(4)
+        });
+
         return {
           isValid: false,
           currentBalance: solBalance,
@@ -446,12 +507,18 @@ export class MeteoraPositionService {
         };
       }
       
+      console.log('✅ Balance validation passed:', {
+        available: solBalance.toFixed(4),
+        required: totalRequired.toFixed(4)
+      });
+
       return {
         isValid: true,
         currentBalance: solBalance
       };
       
     } catch (error) {
+      console.error('❌ Balance validation failed:', error);
       return {
         isValid: false,
         currentBalance: 0,
@@ -461,18 +528,20 @@ export class MeteoraPositionService {
   }
 
   /**
-   * Create a position using ONLY existing bins (with smart heuristics)
+   * 🔥 CRITICAL FIX: Create position with Web3Auth connection support
    */
   async createPositionWithExistingBins(
     params: CreatePositionParams,
     existingBinRange: ExistingBinRange
   ): Promise<CreatePositionResult> {
     try {
-      console.log('Creating position with smart bin range (no RPC intensive calls):', {
-        poolAddress: params.poolAddress,
+      console.log('🚀 Creating position with smart bin range and connection:', {
+        poolAddress: params.poolAddress.substring(0, 8) + '...',
         range: `${existingBinRange.minBinId} to ${existingBinRange.maxBinId}`,
         estimatedBins: existingBinRange.existingBins.length,
-        strategyType: params.strategyType
+        strategyType: params.strategyType,
+        hasCustomConnection: !!params.connection,
+        connectionEndpoint: params.connection?.rpcEndpoint || this.connection.rpcEndpoint
       });
 
       // Get simplified cost estimation
@@ -481,24 +550,26 @@ export class MeteoraPositionService {
         existingBinRange.existingBins.length
       );
 
-      console.log('Simplified cost estimation:', estimatedCost);
+      console.log('📊 Cost estimation:', estimatedCost);
 
-      // Validate user balance
+      // 🔥 KEY FIX: Validate user balance using the correct connection
+      const connectionToUse = params.connection || this.connection;
       const estimatedSolForLiquidity = params.totalXAmount.toNumber() / Math.pow(10, 9);
       const balanceValidation = await this.validateUserBalance(
         params.userPublicKey,
         estimatedSolForLiquidity,
-        estimatedCost
+        estimatedCost,
+        connectionToUse // Pass the connection here
       );
 
       if (!balanceValidation.isValid) {
         throw new Error(balanceValidation.error || 'Insufficient balance');
       }
 
-      console.log('Balance validation passed:', balanceValidation);
+      console.log('✅ Balance validation passed:', balanceValidation);
 
-      // Initialize pool and create position
-      const pool = await this.initializePool(params.poolAddress);
+      // 🔥 KEY FIX: Initialize pool with custom connection
+      const pool = await this.initializePool(params.poolAddress, params.connection);
       const newPosition = new Keypair();
       const typedPool = pool as unknown as DLMMPool;
 
@@ -520,17 +591,17 @@ export class MeteoraPositionService {
             params.strategyType
           );
 
-          console.log('Auto-calculated Y amount using smart bin range:', totalYAmount.toString());
+          console.log('✅ Auto-calculated Y amount using smart bin range:', totalYAmount.toString());
         } catch (autoFillError) {
-          console.warn('AutoFill failed, using provided or zero Y amount:', autoFillError);
+          console.warn('⚠️ AutoFill failed, using provided or zero Y amount:', autoFillError);
           totalYAmount = params.totalYAmount || new BN(0);
         }
       }
 
       // Create the position transaction using smart bin range
-      console.log('Creating position transaction with smart bin range:', {
-        positionPubKey: newPosition.publicKey.toString(),
-        user: params.userPublicKey.toString(),
+      console.log('📝 Creating position transaction with smart bin range:', {
+        positionPubKey: newPosition.publicKey.toString().substring(0, 8) + '...',
+        user: params.userPublicKey.toString().substring(0, 8) + '...',
         totalXAmount: params.totalXAmount.toString(),
         totalYAmount: totalYAmount.toString(),
         strategy: {
@@ -552,7 +623,7 @@ export class MeteoraPositionService {
         },
       });
 
-      console.log('Position transaction created successfully using smart bin ranges');
+      console.log('✅ Position transaction created successfully using smart bin ranges');
 
       return {
         transaction: createPositionTx,
@@ -560,7 +631,7 @@ export class MeteoraPositionService {
         estimatedCost
       };
     } catch (error) {
-      console.error('Error creating position with smart bin ranges:', error);
+      console.error('❌ Error creating position with smart bin ranges:', error);
       
       if (error instanceof Error) {
         if (error.message.includes('insufficient lamports')) {
@@ -570,6 +641,14 @@ export class MeteoraPositionService {
         if (error.message.includes('Transaction simulation failed')) {
           throw new Error('Position creation failed during simulation. The selected range might have restrictions.');
         }
+        
+        // Enhanced error context
+        console.error('Position creation error context:', {
+          poolAddress: params.poolAddress.substring(0, 8) + '...',
+          hasConnection: !!params.connection,
+          connectionEndpoint: params.connection?.rpcEndpoint,
+          errorMessage: error.message
+        });
       }
       
       throw error;
@@ -577,7 +656,7 @@ export class MeteoraPositionService {
   }
 
   /**
-   * Create a one-sided position using portfolio-specific smart bin ranges
+   * 🔥 UPDATED: Create one-sided position with Web3Auth connection support
    */
   async createOneSidedPosition(
     params: CreatePositionParams,
@@ -586,7 +665,12 @@ export class MeteoraPositionService {
     try {
       // First find smart bin ranges based on portfolio style
       const portfolioStyle = params.strategyType === StrategyType.Spot ? 'conservative' : 'moderate';
-      const existingRanges = await this.findExistingBinRanges(params.poolAddress, 20, portfolioStyle);
+      const existingRanges = await this.findExistingBinRanges(
+        params.poolAddress, 
+        20, 
+        portfolioStyle,
+        params.connection // 🔥 Pass connection here
+      );
       
       if (existingRanges.length === 0) {
         throw new Error('No suitable bin ranges found. Cannot create position.');
@@ -595,7 +679,7 @@ export class MeteoraPositionService {
       // Use the best existing range (first one, as they're sorted by popularity)
       const selectedRange = existingRanges[0];
       
-      console.log(`Creating one-sided position with ${portfolioStyle} smart range:`, selectedRange);
+      console.log(`🎯 Creating one-sided position with ${portfolioStyle} smart range:`, selectedRange);
 
       // Get cost estimation
       const estimatedCost = await this.getSimplifiedCostEstimation(
@@ -603,7 +687,8 @@ export class MeteoraPositionService {
         selectedRange.existingBins.length
       );
 
-      const pool = await this.initializePool(params.poolAddress);
+      // 🔥 KEY FIX: Initialize pool with custom connection
+      const pool = await this.initializePool(params.poolAddress, params.connection);
       const newPosition = new Keypair();
       const typedPool = pool as unknown as DLMMPool;
       
@@ -630,7 +715,7 @@ export class MeteoraPositionService {
         }
       }
 
-      console.log('Adjusted range for one-sided position:', { minBinId, maxBinId, useTokenX });
+      console.log('🎯 Adjusted range for one-sided position:', { minBinId, maxBinId, useTokenX });
 
       const createPositionTx = await typedPool.initializePositionAndAddLiquidityByStrategy({
         positionPubKey: newPosition.publicKey,
@@ -650,7 +735,7 @@ export class MeteoraPositionService {
         estimatedCost
       };
     } catch (error) {
-      console.error('Error creating one-sided position with smart ranges:', error);
+      console.error('❌ Error creating one-sided position with smart ranges:', error);
       throw error;
     }
   }
@@ -658,14 +743,17 @@ export class MeteoraPositionService {
   /**
    * Get safe range recommendations using smart heuristics
    */
-  async getSafeRangeRecommendations(poolAddress: string): Promise<{
+  async getSafeRangeRecommendations(
+    poolAddress: string,
+    customConnection?: Connection // 🔥 NEW: Connection parameter
+  ): Promise<{
     conservative: ExistingBinRange;
     balanced: ExistingBinRange;
     aggressive: ExistingBinRange;
     all: ExistingBinRange[];
   }> {
     try {
-      const existingRanges = await this.findExistingBinRanges(poolAddress);
+      const existingRanges = await this.findExistingBinRanges(poolAddress, 20, 'moderate', customConnection);
       
       if (existingRanges.length === 0) {
         throw new Error('No suitable bin ranges found for recommendations');
@@ -693,12 +781,12 @@ export class MeteoraPositionService {
         all: existingRanges
       };
     } catch (error) {
-      console.error('Error getting safe range recommendations:', error);
+      console.error('❌ Error getting safe range recommendations:', error);
       throw error;
     }
   }
 
-  // Keep all existing methods for compatibility but ensure they use smart ranges
+  // 🔥 UPDATED: Add liquidity with connection support
   async addLiquidity(
     params: PositionManagementParams,
     totalXAmount: BN,
@@ -709,9 +797,13 @@ export class MeteoraPositionService {
     useAutoFill: boolean = true
   ): Promise<Transaction | Transaction[]> {
     try {
-      console.log(`Adding liquidity using smart bin range: ${minBinId} to ${maxBinId}`);
+      console.log(`💧 Adding liquidity using smart bin range: ${minBinId} to ${maxBinId}`, {
+        hasConnection: !!params.connection,
+        connectionEndpoint: params.connection?.rpcEndpoint
+      });
       
-      const pool = await this.initializePool(params.poolAddress);
+      // 🔥 KEY FIX: Use connection parameter
+      const pool = await this.initializePool(params.poolAddress, params.connection);
       const typedPool = pool as unknown as DLMMPool;
       const positionPubKey = new PublicKey(params.positionPubkey);
       
@@ -731,8 +823,10 @@ export class MeteoraPositionService {
             maxBinId,
             strategyType
           );
+
+          console.log('✅ AutoFill calculated Y amount:', finalTotalYAmount.toString());
         } catch (autoFillError) {
-          console.warn('AutoFill failed for add liquidity, using zero Y amount:', autoFillError);
+          console.warn('⚠️ AutoFill failed for add liquidity, using zero Y amount:', autoFillError);
           finalTotalYAmount = new BN(0);
         }
       }
@@ -749,17 +843,24 @@ export class MeteoraPositionService {
         },
       });
 
+      console.log('✅ Add liquidity transaction created');
       return addLiquidityTx;
     } catch (error) {
-      console.error('Error adding liquidity with smart ranges:', error);
+      console.error('❌ Error adding liquidity with smart ranges:', error);
       throw error;
     }
   }
 
-  // Keep all other existing methods unchanged
+  // 🔥 UPDATED: Remove liquidity with connection support
   async removeLiquidity(params: RemoveLiquidityParams): Promise<Transaction | Transaction[]> {
     try {
-      const pool = await this.initializePool(params.poolAddress);
+      console.log('🗑️ Removing liquidity with connection support:', {
+        hasConnection: !!params.connection,
+        positionId: params.positionPubkey.substring(0, 8) + '...'
+      });
+
+      // 🔥 KEY FIX: Use connection parameter
+      const pool = await this.initializePool(params.poolAddress, params.connection);
       const positionPubKey = new PublicKey(params.positionPubkey);
       const typedPool = pool as unknown as DLMMPool;
       
@@ -772,20 +873,28 @@ export class MeteoraPositionService {
         shouldClaimAndClose: params.shouldClaimAndClose,
       });
 
+      console.log('✅ Remove liquidity transaction created');
       return removeLiquidityTx;
     } catch (error) {
-      console.error('Error removing liquidity:', error);
+      console.error('❌ Error removing liquidity:', error);
       throw error;
     }
   }
 
+  // 🔥 UPDATED: Remove liquidity from position with connection support
   async removeLiquidityFromPosition(
     params: PositionManagementParams,
     percentageToRemove: number = 100,
     shouldClaimAndClose: boolean = true
   ): Promise<Transaction | Transaction[]> {
     try {
-      const pool = await this.initializePool(params.poolAddress);
+      console.log('🗑️ Removing liquidity from position:', {
+        percentage: percentageToRemove,
+        hasConnection: !!params.connection
+      });
+
+      // 🔥 KEY FIX: Use connection parameter
+      const pool = await this.initializePool(params.poolAddress, params.connection);
       const positionPubKey = new PublicKey(params.positionPubkey);
       const typedPool = pool as unknown as DLMMPool;
 
@@ -820,16 +929,21 @@ export class MeteoraPositionService {
         shouldClaimAndClose,
       });
 
+      console.log('✅ Remove liquidity from position transaction created');
       return removeLiquidityTx;
     } catch (error) {
-      console.error('Error removing liquidity from position:', error);
+      console.error('❌ Error removing liquidity from position:', error);
       throw error;
     }
   }
 
+  // 🔥 UPDATED: Claim fees with connection support
   async claimFees(params: PositionManagementParams): Promise<Transaction> {
     try {
-      const pool = await this.initializePool(params.poolAddress);
+      console.log('💰 Claiming fees with connection support');
+
+      // 🔥 KEY FIX: Use connection parameter
+      const pool = await this.initializePool(params.poolAddress, params.connection);
       const positionPubKey = new PublicKey(params.positionPubkey);
       const typedPool = pool as unknown as DLMMPool;
       
@@ -838,16 +952,25 @@ export class MeteoraPositionService {
         position: positionPubKey,
       });
 
+      console.log('✅ Claim fees transaction created');
       return claimFeeTx;
     } catch (error) {
-      console.error('Error claiming fees:', error);
+      console.error('❌ Error claiming fees:', error);
       throw error;
     }
   }
 
-  async claimAllFees(poolAddress: string, userPublicKey: PublicKey): Promise<Transaction[]> {
+  // 🔥 UPDATED: Claim all fees with connection support
+  async claimAllFees(
+    poolAddress: string, 
+    userPublicKey: PublicKey,
+    customConnection?: Connection
+  ): Promise<Transaction[]> {
     try {
-      const pool = await this.initializePool(poolAddress);
+      console.log('💰 Claiming all fees with connection support');
+
+      // 🔥 KEY FIX: Use connection parameter
+      const pool = await this.initializePool(poolAddress, customConnection);
       const typedPool = pool as unknown as DLMMPool;
 
       const { userPositions } = await typedPool.getPositionsByUserAndLbPair(userPublicKey);
@@ -857,16 +980,21 @@ export class MeteoraPositionService {
         positions: userPositions,
       });
 
+      console.log('✅ Claim all fees transactions created');
       return Array.isArray(claimFeeTxs) ? claimFeeTxs : [claimFeeTxs];
     } catch (error) {
-      console.error('Error claiming all fees:', error);
+      console.error('❌ Error claiming all fees:', error);
       throw error;
     }
   }
 
+  // 🔥 UPDATED: Close position with connection support
   async closePosition(params: PositionManagementParams): Promise<Transaction> {
     try {
-      const pool = await this.initializePool(params.poolAddress);
+      console.log('🔒 Closing position with connection support');
+
+      // 🔥 KEY FIX: Use connection parameter
+      const pool = await this.initializePool(params.poolAddress, params.connection);
       const positionPubKey = new PublicKey(params.positionPubkey);
       const typedPool = pool as unknown as DLMMPool;
       
@@ -875,29 +1003,86 @@ export class MeteoraPositionService {
         position: positionPubKey,
       });
 
+      console.log('✅ Close position transaction created');
       return closePositionTx;
     } catch (error) {
-      console.error('Error closing position:', error);
+      console.error('❌ Error closing position:', error);
       throw error;
     }
   }
 
-  async getPositionInfo(poolAddress: string, positionPubkey: string): Promise<unknown> {
+  // 🔥 UPDATED: Get position info with connection support
+  async getPositionInfo(
+    poolAddress: string, 
+    positionPubkey: string,
+    customConnection?: Connection
+  ): Promise<unknown> {
     try {
-      const pool = await this.initializePool(poolAddress);
+      console.log('ℹ️ Getting position info with connection support');
+
+      // 🔥 KEY FIX: Use connection parameter
+      const pool = await this.initializePool(poolAddress, customConnection);
       const positionPubKey = new PublicKey(positionPubkey);
       const typedPool = pool as unknown as DLMMPool;
 
       const positionInfo = await typedPool.getPosition(positionPubKey);
+      
+      console.log('✅ Position info retrieved');
       return positionInfo;
     } catch (error) {
-      console.error('Error getting position info:', error);
+      console.error('❌ Error getting position info:', error);
       throw error;
+    }
+  }
+
+  /**
+   * 🔥 NEW: Clear cache (useful for connection changes)
+   */
+  clearCache(): void {
+    console.log('🗑️ Clearing position service cache');
+    this.poolInstances.clear();
+    binRangeCache.clear();
+  }
+
+  /**
+   * 🔥 NEW: Get cache statistics
+   */
+  getCacheStats(): { 
+    poolInstances: number; 
+    binRangeCache: number; 
+    poolKeys: string[];
+    binRangeKeys: string[];
+  } {
+    return {
+      poolInstances: this.poolInstances.size,
+      binRangeCache: binRangeCache.size,
+      poolKeys: Array.from(this.poolInstances.keys()),
+      binRangeKeys: Array.from(binRangeCache.keys())
+    };
+  }
+
+  /**
+   * 🔥 NEW: Validate connection for position operations
+   */
+  async validateConnection(poolAddress: string, connection: Connection): Promise<boolean> {
+    try {
+      console.log('🔍 Validating position service connection');
+      
+      // Try to initialize pool and get basic info
+      const pool = await this.initializePool(poolAddress, connection);
+      const typedPool = pool as unknown as DLMMPool;
+      await typedPool.getActiveBin();
+      
+      console.log('✅ Position service connection validated');
+      return true;
+    } catch (error) {
+      console.error('❌ Position service connection validation failed:', error);
+      return false;
     }
   }
 }
 
-// Enhanced hook for smart bin ranges only strategy
+// 🔥 UPDATED: Enhanced hook with Web3Auth support
 export function useMeteoraPositionService() {
   const { publicKey, sendTransaction } = useWallet();
   
@@ -910,7 +1095,8 @@ export function useMeteoraPositionService() {
     service,
     publicKey,
     sendTransaction,
-    // Helper function to handle errors gracefully
+    
+    // 🔥 UPDATED: Helper function to handle errors gracefully
     handlePositionError: (error: unknown): string => {
       if (error instanceof Error) {
         if (error.message.includes('insufficient lamports')) {
@@ -925,9 +1111,53 @@ export function useMeteoraPositionService() {
         if (error.message.includes('bin range')) {
           return 'Cannot use the selected price range - only safe ranges are allowed.';
         }
+        if (error.message.includes('Connection')) {
+          return 'Connection issue with your wallet. Please try reconnecting.';
+        }
         return error.message;
       }
       return 'An unexpected error occurred. Please try again.';
+    },
+
+    // 🔥 NEW: Helper to validate connection for position operations
+    validateConnection: async (poolAddress: string, customConnection?: Connection) => {
+      try {
+        const connectionToUse = customConnection || connection;
+        return await service.validateConnection(poolAddress, connectionToUse);
+      } catch (error) {
+        console.error('Position service connection validation failed:', error);
+        return false;
+      }
+    },
+
+    // 🔥 NEW: Clear service cache
+    clearCache: () => service.clearCache(),
+
+    // 🔥 NEW: Get cache statistics
+    getCacheStats: () => service.getCacheStats(),
+
+    // 🔥 NEW: Helper to create position with Web3Auth connection
+    createPositionWithConnection: async (
+      params: CreatePositionParams,
+      existingBinRange: ExistingBinRange,
+      customConnection?: Connection
+    ) => {
+      const paramsWithConnection = {
+        ...params,
+        connection: customConnection || connection
+      };
+      return await service.createPositionWithExistingBins(paramsWithConnection, existingBinRange);
+    },
+
+    // 🔥 NEW: Helper to find bin ranges with Web3Auth connection
+    findBinRangesWithConnection: async (
+      poolAddress: string,
+      maxRangeWidth: number = 20,
+      portfolioStyle: string = 'conservative',
+      customConnection?: Connection
+    ) => {
+      const connectionToUse = customConnection || connection;
+      return await service.findExistingBinRanges(poolAddress, maxRangeWidth, portfolioStyle, connectionToUse);
     }
   };
 }
