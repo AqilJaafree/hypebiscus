@@ -1,5 +1,5 @@
 // src/components/dashboard-components/AddLiquidityModal.tsx
-// 🔥 COMPLETE FIXED VERSION with Web3Auth Support
+// 🔥 COMPLETE FIXED VERSION with Web3Auth Support - Variable Scoping Issue Resolved
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
@@ -99,6 +99,19 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
   const { service: dlmmService } = useMeteoraDlmmService();
   const { service: positionService } = useMeteoraPositionService();
   const tokens = useTokenData();
+  
+  // 🔥 FIXED: Get token names from pool - MOVED TO TOP to avoid scoping issues
+  const getTokenNames = useCallback(() => {
+    if (!pool) return { tokenX: 'BTC', tokenY: 'SOL' };
+    const [tokenX, tokenY] = pool.name.split('-');
+    return { 
+      tokenX: tokenX.replace('WBTC', 'wBTC'), 
+      tokenY 
+    };
+  }, [pool]);
+
+  // 🔥 FIXED: DECLARE tokenX HERE - BEFORE using it anywhere
+  const { tokenX } = getTokenNames();
   
   // 🔥 CORRECTED WALLET DETECTION LOGIC with enhanced connection handling
   const walletInfo: WalletInfo = useMemo(() => {
@@ -211,18 +224,6 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
     }
   }, [walletInfo, web3AuthConnected, accounts, web3AuthConnection, signAndSendTransaction, signAndSendLoading, signAndSendError]);
 
-  // Get token names from pool
-  const getTokenNames = useCallback(() => {
-    if (!pool) return { tokenX: 'BTC', tokenY: 'SOL' };
-    const [tokenX, tokenY] = pool.name.split('-');
-    return { 
-      tokenX: tokenX.replace('WBTC', 'wBTC'), 
-      tokenY 
-    };
-  }, [pool]);
-
-  const { tokenX } = getTokenNames();
-
   // Strategy options
   const strategyOptions: StrategyOption[] = useMemo(() => {
     if (existingBinRanges.length === 0) return [];
@@ -268,7 +269,7 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
 
   const selectedStrategyOption = strategyOptions.find(opt => opt.id === selectedStrategy);
 
-  // Token balance fetching with connection support
+  // 🔥 FIXED: Token balance fetching with connection support - tokenX now properly available
   const fetchUserTokenBalance = useCallback(async () => {
     if (!walletInfo.publicKey || !pool || !walletInfo.connection) {
       console.log('⏭️ Skipping token balance fetch:', {
@@ -283,10 +284,8 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
       console.log('💰 Fetching user token balance with connection:', {
         walletType: walletInfo.type,
         connectionEndpoint: walletInfo.connection.rpcEndpoint,
-        tokenSymbol: tokenX
+        tokenSymbol: tokenX // ✅ Now tokenX is properly declared above
       });
-
-      const { tokenX } = getTokenNames();
       
       // Define known token mint addresses
       const TOKEN_MINTS: Record<string, string> = {
@@ -340,7 +339,7 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
       console.error('❌ Error fetching token balance:', error);
       setUserTokenBalance(0);
     }
-  }, [walletInfo.publicKey, walletInfo.connection, walletInfo.type, pool, tokens, getTokenNames, tokenX]);
+  }, [walletInfo.publicKey, walletInfo.connection, walletInfo.type, pool, tokens, tokenX]); // ✅ tokenX is now properly in dependencies
 
   // 🔥 CORRECTED: Find existing bin ranges with proper connection handling
   const findExistingBinRanges = useCallback(async (poolAddress: string) => {
@@ -488,7 +487,7 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
     }
   }, [isOpen, walletInfo.publicKey, pool, fetchUserTokenBalance]);
 
-  // Input handlers
+  // 🔥 FIXED: Input handlers - now tokenX is available
   const handlePercentageClick = useCallback((percentage: number) => {
     if (isUpdatingAmount) return;
     
@@ -508,7 +507,7 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
     setTimeout(() => {
       setIsUpdatingAmount(false);
     }, 300);
-  }, [userTokenBalance, isUpdatingAmount, tokenX]);
+  }, [userTokenBalance, isUpdatingAmount, tokenX]); // ✅ tokenX properly available
 
   const handleMaxClick = useCallback(() => {
     if (isUpdatingAmount) return;
@@ -529,7 +528,7 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
     setTimeout(() => {
       setIsUpdatingAmount(false);
     }, 300);
-  }, [userTokenBalance, tokenX, isUpdatingAmount]);
+  }, [userTokenBalance, tokenX, isUpdatingAmount]); // ✅ tokenX properly available
 
   // Balance checking with connection support
   const checkUserBalances = useCallback(async () => {
