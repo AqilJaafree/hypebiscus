@@ -1,5 +1,5 @@
 // src/components/dashboard-components/AddLiquidityModal.tsx
-// 🔥 COMPLETE FIXED VERSION with Web3Auth Support - Variable Scoping Issue Resolved
+// 🔥 COMPLETE FIXED VERSION with Web3Auth Support - signatureSubscribe Error RESOLVED
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
@@ -100,7 +100,7 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
   const { service: positionService } = useMeteoraPositionService();
   const tokens = useTokenData();
   
-  // 🔥 FIXED: Get token names from pool - MOVED TO TOP to avoid scoping issues
+  // Get token names from pool - MOVED TO TOP to avoid scoping issues
   const getTokenNames = useCallback(() => {
     if (!pool) return { tokenX: 'BTC', tokenY: 'SOL' };
     const [tokenX, tokenY] = pool.name.split('-');
@@ -110,10 +110,10 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
     };
   }, [pool]);
 
-  // 🔥 FIXED: DECLARE tokenX HERE - BEFORE using it anywhere
+  // DECLARE tokenX HERE - BEFORE using it anywhere
   const { tokenX } = getTokenNames();
   
-  // 🔥 CORRECTED WALLET DETECTION LOGIC with enhanced connection handling
+  // CORRECTED WALLET DETECTION LOGIC with enhanced connection handling
   const walletInfo: WalletInfo = useMemo(() => {
     // Check traditional wallet first
     if (traditionalConnected && traditionalPublicKey) {
@@ -139,7 +139,7 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
           signLoading: signAndSendLoading
         });
         
-        // 🔥 KEY FIX: Enhanced transaction capability check
+        // Enhanced transaction capability check
         const canTransact = !!signAndSendTransaction && 
                            !!web3AuthConnection && 
                            !signAndSendLoading &&
@@ -150,7 +150,7 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
           publicKey,
           isConnected: true,
           canTransact,
-          connection: web3AuthConnection, // 🔥 This is the critical fix
+          connection: web3AuthConnection,
           walletName: 'Web3Auth Wallet'
         };
       } catch (error) {
@@ -269,7 +269,7 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
 
   const selectedStrategyOption = strategyOptions.find(opt => opt.id === selectedStrategy);
 
-  // 🔥 FIXED: Token balance fetching with connection support - tokenX now properly available
+  // Token balance fetching with connection support
   const fetchUserTokenBalance = useCallback(async () => {
     if (!walletInfo.publicKey || !pool || !walletInfo.connection) {
       console.log('⏭️ Skipping token balance fetch:', {
@@ -284,7 +284,7 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
       console.log('💰 Fetching user token balance with connection:', {
         walletType: walletInfo.type,
         connectionEndpoint: walletInfo.connection.rpcEndpoint,
-        tokenSymbol: tokenX // ✅ Now tokenX is properly declared above
+        tokenSymbol: tokenX
       });
       
       // Define known token mint addresses
@@ -314,7 +314,7 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
         return;
       }
 
-      // 🔥 KEY FIX: Use the wallet's connection
+      // Use the wallet's connection
       const tokenAccounts = await walletInfo.connection.getParsedTokenAccountsByOwner(
         walletInfo.publicKey,
         { programId: TOKEN_PROGRAM_ID }
@@ -339,9 +339,9 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
       console.error('❌ Error fetching token balance:', error);
       setUserTokenBalance(0);
     }
-  }, [walletInfo.publicKey, walletInfo.connection, walletInfo.type, pool, tokens, tokenX]); // ✅ tokenX is now properly in dependencies
+  }, [walletInfo.publicKey, walletInfo.connection, walletInfo.type, pool, tokens, tokenX]);
 
-  // 🔥 CORRECTED: Find existing bin ranges with proper connection handling
+  // Find existing bin ranges with proper connection handling
   const findExistingBinRanges = useCallback(async (poolAddress: string) => {
     if (findingBinsRef.current || !poolAddress || !walletInfo.connection) {
       console.log('⏭️ Skipping bin range search:', {
@@ -373,17 +373,17 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
         connectionEndpoint: walletInfo.connection.rpcEndpoint
       });
 
-      // 🔥 KEY FIX: Pass the correct connection to both services
+      // Pass the correct connection to both services
       const dlmmPool = await dlmmService.initializePool(poolAddress, walletInfo.connection);
       const activeBin = await dlmmPool.getActiveBin();
       setCurrentBinId(activeBin.binId);
       
-      // 🔥 KEY FIX: Pass connection to position service
+      // Pass connection to position service
       const existingRanges = await positionService.findExistingBinRanges(
         poolAddress, 
         69, 
         actualPortfolioStyle,
-        walletInfo.connection // Pass the connection here
+        walletInfo.connection
       );
       
       let finalRanges: ExistingBinRange[];
@@ -487,7 +487,7 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
     }
   }, [isOpen, walletInfo.publicKey, pool, fetchUserTokenBalance]);
 
-  // 🔥 FIXED: Input handlers - now tokenX is available
+  // Input handlers
   const handlePercentageClick = useCallback((percentage: number) => {
     if (isUpdatingAmount) return;
     
@@ -507,7 +507,7 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
     setTimeout(() => {
       setIsUpdatingAmount(false);
     }, 300);
-  }, [userTokenBalance, isUpdatingAmount, tokenX]); // ✅ tokenX properly available
+  }, [userTokenBalance, isUpdatingAmount, tokenX]);
 
   const handleMaxClick = useCallback(() => {
     if (isUpdatingAmount) return;
@@ -528,7 +528,7 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
     setTimeout(() => {
       setIsUpdatingAmount(false);
     }, 300);
-  }, [userTokenBalance, tokenX, isUpdatingAmount]); // ✅ tokenX properly available
+  }, [userTokenBalance, tokenX, isUpdatingAmount]);
 
   // Balance checking with connection support
   const checkUserBalances = useCallback(async () => {
@@ -545,7 +545,7 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
         connectionEndpoint: walletInfo.connection.rpcEndpoint
       });
 
-      // 🔥 KEY FIX: Use the wallet's connection for balance check
+      // Use the wallet's connection for balance check
       const solBalanceLamports = await walletInfo.connection.getBalance(walletInfo.publicKey);
       const solBalance = solBalanceLamports / LAMPORTS_PER_SOL;
       
@@ -599,7 +599,7 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
     }
   };
 
-  // 🔥 CORRECTED TRANSACTION HANDLER with full Web3Auth support
+  // 🔥 FIXED TRANSACTION HANDLER - NO MORE signatureSubscribe ERROR
   const handleAddLiquidity = async () => {
     console.log('🚀 Starting transaction with wallet:', {
       type: walletInfo.type,
@@ -661,7 +661,7 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
         bnAmount: bnAmount.toString()
       });
 
-      // 🔥 KEY FIX: Pass the connection to position service
+      // Pass the connection to position service
       const result = await positionService.createPositionWithExistingBins({
         poolAddress: pool.address,
         userPublicKey: walletInfo.publicKey,
@@ -671,12 +671,12 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
         maxBinId: selectedRange.maxBinId,
         strategyType: StrategyType.Spot,
         useAutoFill: false,
-        connection: walletInfo.connection // 🔥 Pass the connection here
+        connection: walletInfo.connection
       }, selectedRange);
       
       console.log('✅ Position created, processing transactions...');
       
-      // 🔥 CORRECTED TRANSACTION HANDLING
+      // 🔥 FIXED TRANSACTION HANDLING - NO MORE SUBSCRIPTION ERRORS
       if (walletInfo.type === 'traditional') {
         console.log('💳 Processing with traditional wallet...');
         
@@ -705,63 +705,34 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
           throw new Error('Web3Auth connection not available');
         }
         
-        // Enhanced Web3Auth transaction handling
-        if (Array.isArray(result.transaction)) {
-          for (const tx of result.transaction) {
-            try {
-              // Ensure transaction has required fields
-              if (!tx.recentBlockhash) {
-                const block = await web3AuthConnection.getLatestBlockhash("finalized");
-                tx.recentBlockhash = block.blockhash;
-                tx.lastValidBlockHeight = block.lastValidBlockHeight;
-              }
-              if (!tx.feePayer) {
-                tx.feePayer = walletInfo.publicKey;
-              }
-              
-              // 🔥 Add the position keypair as a signer
-              if (result.positionKeypair) {
-                tx.partialSign(result.positionKeypair);
-              }
-              
-              const signature = await signAndSendTransaction(tx);
-              console.log('✅ Web3Auth transaction signature:', signature);
-              
-              // Wait for confirmation
-              const confirmation = await web3AuthConnection.confirmTransaction(signature, 'confirmed');
-              if (confirmation.value.err) {
-                throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
-              }
-            } catch (txError) {
-              console.error('❌ Web3Auth transaction error:', txError);
-              throw txError;
-            }
-          }
-        } else {
+        // 🔥 FIXED: Web3Auth transaction handling - NO MANUAL CONFIRMATION
+        const transactions = Array.isArray(result.transaction) ? result.transaction : [result.transaction];
+        
+        for (const tx of transactions) {
           try {
             // Ensure transaction has required fields
-            if (!result.transaction.recentBlockhash) {
+            if (!tx.recentBlockhash) {
               const block = await web3AuthConnection.getLatestBlockhash("finalized");
-              result.transaction.recentBlockhash = block.blockhash;
-              result.transaction.lastValidBlockHeight = block.lastValidBlockHeight;
+              tx.recentBlockhash = block.blockhash;
+              tx.lastValidBlockHeight = block.lastValidBlockHeight;
             }
-            if (!result.transaction.feePayer) {
-              result.transaction.feePayer = walletInfo.publicKey;
+            if (!tx.feePayer) {
+              tx.feePayer = walletInfo.publicKey;
             }
             
-            // 🔥 Add the position keypair as a signer
+            // Add the position keypair as a signer
             if (result.positionKeypair) {
-              result.transaction.partialSign(result.positionKeypair);
+              tx.partialSign(result.positionKeypair);
             }
             
-            const signature = await signAndSendTransaction(result.transaction);
-            console.log('✅ Web3Auth transaction signature:', signature);
+            // 🔥 CRITICAL FIX: Just sign and send - Web3Auth handles confirmation internally
+            const signature = await signAndSendTransaction(tx);
+            console.log('✅ Web3Auth transaction completed:', signature);
             
-            // Wait for confirmation
-            const confirmation = await web3AuthConnection.confirmTransaction(signature, 'confirmed');
-            if (confirmation.value.err) {
-              throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
-            }
+            // 🔥 REMOVED: Do NOT call confirmTransaction() or any subscription-based confirmation
+            // The useSignAndSendTransaction hook already handles confirmation internally
+            // Adding manual confirmation causes the signatureSubscribe error
+            
           } catch (txError) {
             console.error('❌ Web3Auth transaction error:', txError);
             throw txError;
