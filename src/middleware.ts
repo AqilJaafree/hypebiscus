@@ -35,6 +35,7 @@ export function middleware(request: NextRequest) {
       https://assets.web3auth.io 
       https://auth.web3auth.io
       https://js.hcaptcha.com
+      https://mainnet.helius-rpc.com
       https://newassets.hcaptcha.com
       https://cdn.segment.com;
     style-src 'self' 'unsafe-inline' 
