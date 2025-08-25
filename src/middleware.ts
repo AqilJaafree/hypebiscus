@@ -53,6 +53,7 @@ export function middleware(request: NextRequest) {
     connect-src 'self' 
       https://api.mainnet-beta.solana.com 
       https://solana-mainnet.g.alchemy.com 
+      https://mainnet.helius-rpc.com
       https://sly-virulent-owl.solana-mainnet.quiknode.pro 
       https://terminal.jup.ag 
       https://lite-api.jup.ag 
