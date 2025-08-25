@@ -2,8 +2,13 @@
 
 import PageTemplate from "@/components/PageTemplate";
 import React, { useState, useEffect } from "react";
-import { Connection, PublicKey } from "@solana/web3.js";
+// Add Transaction import at the top
+import { Connection, PublicKey, Transaction } from "@solana/web3.js";
 import { useWallet } from "@solana/wallet-adapter-react";
+// 🔥 ADD: Web3Auth imports
+import { useWeb3AuthConnect } from '@web3auth/modal/react';
+import { useSolanaWallet, useSignAndSendTransaction } from '@web3auth/modal/react/solana';
+
 import DLMM from "@meteora-ag/dlmm";
 import { RangeBar } from "@/components/profile-components/RangeBar";
 import BN from "bn.js";
@@ -79,6 +84,17 @@ interface PoolWithActiveId {
 type BinData = { binId: number; pricePerToken?: string | number }
 
 type MaybeBase58 = { toBase58?: () => string }
+
+// 🔥 ADD: Enhanced wallet info interface
+interface WalletInfo {
+  type: 'traditional' | 'web3auth' | null;
+  publicKey: PublicKey | null;
+  isConnected: boolean;
+  canTransact: boolean;
+  connection: Connection | null;
+  sendTransaction: ((tx: Transaction) => Promise<string>) | null;
+}
+
 // Custom hook to fetch token meta for a pool
 function useTokenMeta(pool: PoolWithActiveId) {
   const [tokenXMeta, setTokenXMeta] = React.useState<TokenMeta | null>(null);
@@ -97,7 +113,7 @@ function useTokenMeta(pool: PoolWithActiveId) {
   return { tokenXMeta, tokenYMeta };
 }
 
-// Custom hook for position actions
+// Custom hook for position actions - UPDATED for Web3Auth support
 function usePositionActions(
   lbPairAddress: string,
   pos: PositionType,
@@ -105,24 +121,77 @@ function usePositionActions(
 ) {
   const [closing, setClosing] = React.useState(false);
   const [claiming, setClaiming] = React.useState(false);
-  const { publicKey, sendTransaction } = useWallet();
+  
+  // Traditional wallet
+  const { publicKey: traditionalPublicKey, sendTransaction: traditionalSendTransaction } = useWallet();
+  
+  // 🔥 ADD: Web3Auth wallet hooks
+  const { isConnected: web3AuthConnected } = useWeb3AuthConnect();
+  const { accounts, connection: web3AuthConnection } = useSolanaWallet();
+  const { signAndSendTransaction: web3AuthSignAndSend } = useSignAndSendTransaction();
 
+  // 🔥 ADD: Unified wallet info
+  const walletInfo: WalletInfo = React.useMemo(() => {
+    // Check traditional wallet first
+    if (traditionalPublicKey) {
+      const connection = new Connection(process.env.NEXT_PUBLIC_SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com");
+      return {
+        type: 'traditional',
+        publicKey: traditionalPublicKey,
+        isConnected: true,
+        canTransact: true,
+        connection,
+        sendTransaction: async (tx: Transaction) => {
+          return await traditionalSendTransaction(tx, connection);
+        }
+      };
+    }
+    
+    // Check Web3Auth wallet
+    if (web3AuthConnected && accounts?.[0] && web3AuthConnection) {
+      try {
+        const publicKey = new PublicKey(accounts[0]);
+        return {
+          type: 'web3auth',
+          publicKey,
+          isConnected: true,
+          canTransact: !!web3AuthSignAndSend,
+          connection: web3AuthConnection,
+          sendTransaction: web3AuthSignAndSend ? async (tx: Transaction) => {
+            return await web3AuthSignAndSend(tx);
+          } : null
+        };
+      } catch (error) {
+        console.error('Invalid Web3Auth account:', error);
+      }
+    }
+    
+    return {
+      type: null,
+      publicKey: null,
+      isConnected: false,
+      canTransact: false,
+      connection: null,
+      sendTransaction: null
+    };
+  }, [traditionalPublicKey, traditionalSendTransaction, web3AuthConnected, accounts, web3AuthConnection, web3AuthSignAndSend]);
+
+  // 🔥 UPDATED: Close and withdraw function
   async function handleCloseAndWithdraw() {
-    if (!publicKey) return;
+    if (!walletInfo.isConnected || !walletInfo.canTransact) {
+      showToast.error("Wallet Error", "Please connect your wallet to continue.");
+      return;
+    }
+    
     setClosing(true);
     try {
       const posKey = pos.publicKey;
-      const user = publicKey;
-      const lowerBinId = Number(pos.positionData.lowerBinId)
-      const upperBinId = Number(pos.positionData.upperBinId)
-      const connection = new Connection(
-        process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
-          "https://api.mainnet-beta.solana.com"
-      );
-      const dlmmPool = await DLMM.create(
-        connection,
-        new PublicKey(lbPairAddress)
-      );
+      const user = walletInfo.publicKey!;
+      const lowerBinId = Number(pos.positionData.lowerBinId);
+      const upperBinId = Number(pos.positionData.upperBinId);
+      
+      const dlmmPool = await DLMM.create(walletInfo.connection!, new PublicKey(lbPairAddress));
+      
       const txOrTxs = await dlmmPool.removeLiquidity({
         user,
         position: posKey,
@@ -131,21 +200,25 @@ function usePositionActions(
         bps: new BN(10000),
         shouldClaimAndClose: true,
       });
+      
+      // 🔥 UPDATED: Handle different wallet types
       if (Array.isArray(txOrTxs)) {
         for (const tx of txOrTxs) {
-          await sendTransaction(tx, connection);
+          await walletInfo.sendTransaction!(tx);
         }
       } else {
-        await sendTransaction(txOrTxs, connection);
+        await walletInfo.sendTransaction!(txOrTxs);
       }
+      
       showToast.success(
         "Transaction successful",
         "Your position has been closed and your funds have been withdrawn."
       );
-      // Add delay to allow blockchain state to update before refreshing
+      
       setTimeout(() => {
         refreshPositions();
       }, 10000);
+      
     } catch (err) {
       showToast.error("Failed to close position", (err as Error).message);
     } finally {
@@ -153,50 +226,40 @@ function usePositionActions(
     }
   }
 
+  // 🔥 UPDATED: Claim fees function
   async function handleClaimFees() {
-    if (!publicKey) return;
+    if (!walletInfo.isConnected || !walletInfo.canTransact) {
+      showToast.error("Wallet Error", "Please connect your wallet to continue.");
+      return;
+    }
+    
     setClaiming(true);
     try {
       const posKey = pos.publicKey;
-      const user = publicKey;
-      const connection = new Connection(
-        process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
-          "https://api.mainnet-beta.solana.com"
-      );
-      const dlmmPool = await DLMM.create(
-        connection,
-        new PublicKey(lbPairAddress)
-      );
+      const user = walletInfo.publicKey!;
+      
+      const dlmmPool = await DLMM.create(walletInfo.connection!, new PublicKey(lbPairAddress));
       const position = await dlmmPool.getPosition(posKey);
+      
       const txOrTxs = await dlmmPool.claimSwapFee({
         owner: user,
         position,
       });
       
-      // FIXED: Handle both single transaction and array of transactions
       if (txOrTxs) {
+        // 🔥 UPDATED: Handle different wallet types
         if (Array.isArray(txOrTxs)) {
-          // Handle array of transactions
           for (const tx of txOrTxs) {
-            await sendTransaction(tx, connection);
+            await walletInfo.sendTransaction!(tx);
           }
         } else {
-          // Handle single transaction
-          await sendTransaction(txOrTxs, connection);
+          await walletInfo.sendTransaction!(txOrTxs);
         }
-        showToast.success(
-          "Transaction successful",
-          "Your fees have been claimed."
-        );
-        // Add delay to allow blockchain state to update before refreshing
-        setTimeout(() => {
-          refreshPositions();
-        }, 10000);
+        
+        showToast.success("Transaction successful", "Your fees have been claimed.");
+        setTimeout(() => refreshPositions(), 10000);
       } else {
-        showToast.error(
-          "No fees to claim",
-          "You don't have any fees to claim."
-        );
+        showToast.error("No fees to claim", "You don't have any fees to claim.");
       }
     } catch (err) {
       showToast.error("Failed to claim fees", (err as Error).message);
@@ -204,12 +267,13 @@ function usePositionActions(
       setClaiming(false);
     }
   }
+  
   return {
     closing,
     claiming,
     handleCloseAndWithdraw,
     handleClaimFees,
-    publicKey,
+    walletInfo, // Return wallet info for button states
   };
 }
 
@@ -337,7 +401,7 @@ function PositionItem({
     claiming,
     handleCloseAndWithdraw,
     handleClaimFees,
-    publicKey,
+    walletInfo,
   } = usePositionActions(lbPairAddress, pos, refreshPositions);
   
   // Use shared hook for display data
@@ -477,14 +541,14 @@ function PositionItem({
         variant="secondary"
         className={size}
         onClick={handleClaimFees}
-        disabled={claiming || !publicKey}
+        disabled={claiming || !walletInfo.canTransact}
       >
         {claiming ? "Claiming..." : "Claim Fees"}
       </Button>
       <Button
         className={size}
         onClick={handleCloseAndWithdraw}
-        disabled={closing || !publicKey}
+        disabled={closing || !walletInfo.canTransact}
       >
         {closing ? "Closing..." : "Close & Withdraw"}
       </Button>
@@ -577,7 +641,16 @@ function PositionItem({
 }
 
 const WalletPage = () => {
-  const { publicKey, connected, connecting } = useWallet();
+  // Traditional wallet
+  const { connected: traditionalConnected } = useWallet();
+  
+  // 🔥 ADD: Web3Auth wallet
+  const { isConnected: web3AuthConnected } = useWeb3AuthConnect();
+  const { accounts } = useSolanaWallet();
+  
+  // 🔥 UPDATED: Combined connection check
+  const isAnyWalletConnected = traditionalConnected || (web3AuthConnected && accounts && accounts.length > 0);
+  
   const [positions, setPositions] = useState(new Map());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -595,16 +668,30 @@ const WalletPage = () => {
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  // Fetch positions when wallet connects
-  useEffect(() => {
-    if (connected && publicKey) {
-      fetchPositions(publicKey);
-    } else {
-      setPositions(new Map());
+  // 🔥 UPDATED: Get current wallet's public key
+  const { publicKey: traditionalPublicKey } = useWallet();
+  
+  const getCurrentWalletPublicKey = React.useCallback((): PublicKey | null => {
+    // Check traditional wallet first
+    if (traditionalPublicKey) return traditionalPublicKey;
+    
+    // Check Web3Auth wallet
+    if (web3AuthConnected && accounts?.[0]) {
+      try {
+        return new PublicKey(accounts[0]);
+      } catch (error) {
+        console.error('Invalid Web3Auth account:', error);
+      }
     }
-  }, [connected, publicKey]);
+    
+    return null;
+  }, [traditionalPublicKey, web3AuthConnected, accounts]);
 
-  const fetchPositions = async (userPubKey: PublicKey) => {
+  // 🔥 UPDATED: Fetch positions function
+  const fetchPositions = React.useCallback(async () => {
+    const currentPublicKey = getCurrentWalletPublicKey();
+    if (!currentPublicKey) return;
+    
     try {
       setLoading(true);
       setError("");
@@ -622,35 +709,29 @@ const WalletPage = () => {
       // Continue with your logic...
       const userPositions = await DLMM.getAllLbPairPositionsByUser(
         connection,
-        userPubKey
+        currentPublicKey
       );
 
-      // userPositions.forEach((positionInfo, lbPairAddress) => {
-      //   // Custom replacer for JSON.stringify to handle BigInt, BN.js, and PublicKey
-      //   const replacer = (key: string, value: any) => {
-      //     if (typeof value === 'bigint') return value.toString()
-      //     if (value && value._bn) return value.toString()
-      //     if (value && typeof value.toBase58 === 'function') return value.toBase58()
-      //     return value
-      //   }
-      //   console.log(`Positions in pool ${lbPairAddress}:`, JSON.stringify(positionInfo, replacer, 2))
-      // });
       setPositions(userPositions);
-
-      // Temporary: Set empty positions until DLMM is imported
-      // setPositions(new Map());
     } catch (err) {
       setError("Failed to fetch positions: " + (err as Error).message);
     } finally {
       setLoading(false);
     }
-  };
+  }, [getCurrentWalletPublicKey]);
 
   const refreshPositions = () => {
-    if (publicKey) {
-      fetchPositions(publicKey);
-    }
+    fetchPositions();
   };
+
+  // 🔥 UPDATED: Effect to fetch positions when any wallet connects
+  useEffect(() => {
+    if (isAnyWalletConnected) {
+      fetchPositions();
+    } else {
+      setPositions(new Map());
+    }
+  }, [isAnyWalletConnected, fetchPositions]);
 
   const positionsArray = Array.from(positions.entries());
 
@@ -703,7 +784,7 @@ const WalletPage = () => {
 
           {/* Positions List */}
           {!loading &&
-            connected &&
+            isAnyWalletConnected &&
             positionsArray.length > 0 &&
             (viewMode === "table" ? (
               <div className="overflow-x-auto styled-scrollbar">
@@ -761,7 +842,7 @@ const WalletPage = () => {
             ))}
 
           {/* Empty State */}
-          {!loading && connected && positionsArray.length === 0 && (
+          {!loading && isAnyWalletConnected && positionsArray.length === 0 && (
             <div className="rounded-lg shadow-sm p-8 text-center">
               <ChartLineUpIcon className="w-12 h-12 text-white mx-auto mb-4" />
               <h3 className="text-lg font-medium text-white mb-2">
@@ -773,15 +854,15 @@ const WalletPage = () => {
             </div>
           )}
 
-          {/* Not Connected State */}
-          {!connected && !connecting && (
+          {/* 🔥 UPDATED: Not Connected State */}
+          {!isAnyWalletConnected && (
             <div className="rounded-lg shadow-sm p-8 text-center">
               <WalletIcon className="w-12 h-12 text-white mx-auto mb-4" />
               <h3 className="text-lg font-medium text-white mb-2">
                 Connect Your Wallet
               </h3>
               <p className="text-sub-text">
-                Please connect your wallet to view your LB pair positions.
+                Please connect your wallet (traditional or social login) to view your LB pair positions.
               </p>
             </div>
           )}
