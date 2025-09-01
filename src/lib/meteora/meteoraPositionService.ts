@@ -585,7 +585,7 @@ export class MeteoraPositionService {
   ): Promise<CreatePositionResult> {
     try {
       // First find smart bin ranges based on portfolio style
-      const portfolioStyle = params.strategyType === StrategyType.Spot ? 'conservative' : 'moderate';
+      const portfolioStyle = params.strategyType === StrategyType.BidAsk ? 'conservative' : 'moderate';
       const existingRanges = await this.findExistingBinRanges(params.poolAddress, 20, portfolioStyle);
       
       if (existingRanges.length === 0) {

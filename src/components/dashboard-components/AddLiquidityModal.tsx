@@ -443,7 +443,7 @@ const AddLiquidityModal: React.FC<AddLiquidityModalProps> = ({
         totalYAmount: new BN(0),
         minBinId: selectedRange.minBinId,
         maxBinId: selectedRange.maxBinId,
-        strategyType: StrategyType.Spot,
+        strategyType: StrategyType.BidAsk,
         useAutoFill: false
       }, selectedRange);
       

@@ -142,7 +142,7 @@ export async function parseDlmmCommand(params: CommandParams): Promise<CommandRe
           activeBin.yAmount,
           activeBin.binId - 10,
           activeBin.binId + 10,
-          StrategyType.Spot
+          StrategyType.BidAsk
         );
         
         const estimatedYFormatted = (estimatedY.toNumber() / Math.pow(10, 9)).toFixed(6);
